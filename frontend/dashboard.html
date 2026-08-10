@@ -651,7 +651,7 @@
       </div>
     </div>
     <div class="header-create-row">
-      <button class="header-new-btn" onclick="toggleNewProject()">+ New Project</button>
+      <button class="header-new-btn" id="newProjectBtn" onclick="toggleNewProject()">+ New Project</button>
       <button class="header-new-btn" onclick="toggleNewAgent()">+ New Agent</button>
       <button class="header-new-btn" onclick="toggleNewConnector()">+ New Connector</button>
     </div>
@@ -1343,6 +1343,14 @@ function toggleNewProject() {
   document.getElementById('teamOverlay').classList.remove('open');
   document.getElementById('projectNewForm').classList.toggle('open');
 }
+
+document.addEventListener('click', function(e) {
+  const form = document.getElementById('projectNewForm');
+  const btn = document.getElementById('newProjectBtn');
+  if (form.classList.contains('open') && !form.contains(e.target) && e.target !== btn) {
+    form.classList.remove('open');
+  }
+});
 
 async function submitNewProject(name, domain) {
   if (!name) return null;
