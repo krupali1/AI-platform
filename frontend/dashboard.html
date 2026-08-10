@@ -80,6 +80,7 @@
     display: flex; flex-direction: column;
   }
   .sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+  #projectSetupSubmenu { flex-direction: column; gap: 2px; }
   .sidebar-label {
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--text-muted); padding: 6px 12px; margin-top: 14px;
@@ -97,6 +98,9 @@
     font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
     padding: 4px 12px 10px;
   }
+  .sidebar-caret { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+  .sidebar-caret.open { transform: scaleY(-1); }
+  .sidebar-subitem { padding-left: 26px; font-size: 12.5px; }
 
   .content-area { flex: 1; min-width: 0; }
   .all-projects-section { padding: 24px 24px 0; background: var(--bg); }
@@ -114,6 +118,8 @@
   .projects-table tr.current-row { background: var(--accent-bg); }
   .projects-table .proj-name { font-weight: 600; }
   .projects-table .proj-domain { color: var(--text-muted); font-family: var(--mono); font-size: 11px; }
+  .projects-table .proj-summary-snippet { color: var(--text-muted); font-size: 12px; line-height: 1.4; margin-top: 3px; max-width: 480px; }
+  .projects-table .proj-summary-snippet.proj-summary-empty { font-style: italic; }
   .projects-table .proj-counts { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
   .projects-table .open-btn {
     font-family: var(--mono); font-size: 10.5px; color: var(--accent);
@@ -845,6 +851,15 @@
       <div class="sidebar-label">This Project</div>
       <div class="sidebar-project-name" id="projectTitle">…</div>
       <a class="sidebar-item" href="/repository">Repository</a>
+      <button class="sidebar-item" onclick="toggleProjectSetupMenu()">
+        Project Setup
+        <span class="sidebar-caret" id="projectSetupCaret">▾</span>
+      </button>
+      <div id="projectSetupSubmenu" style="display:none;">
+        <a class="sidebar-item sidebar-subitem" href="/?step=1" onclick="return jumpToStep(1, event)">1. Set up project</a>
+        <a class="sidebar-item sidebar-subitem" href="/?step=2" onclick="return jumpToStep(2, event)">2. Extract &amp; store</a>
+        <a class="sidebar-item sidebar-subitem" href="/?step=3" onclick="return jumpToStep(3, event)">3. Ask &amp; Search</a>
+      </div>
       <button class="sidebar-item" onclick="toggleTeamPanel()">Team &amp; Keys</button>
       <div class="sidebar-label">Account</div>
       <button class="sidebar-item" onclick="toggleSettings()">AI Provider</button>
@@ -956,6 +971,51 @@ let currentProjectId = null;
 let allProjects = [];
 let pendingApplyProjectId = null;
 
+// Dashboard loads collapsed - just the projects list with a truncated
+// summary snippet per row. Clicking a project (or a Project Setup step in
+// the sidebar) expands this project's section in place: the full detailed
+// summary, the stepper, and the step content. Nothing about which section
+// is expanded persists across a fresh page load - it always starts collapsed.
+let projectExpanded = false;
+
+function renderProjectExpansion() {
+  const show = projectExpanded && !!currentProjectId;
+  document.getElementById('thisProjectAnchor').style.display = show ? 'block' : 'none';
+  document.getElementById('summaryPanel').style.display = show ? 'block' : 'none';
+  document.getElementById('stepper').style.display = show ? 'flex' : 'none';
+  document.getElementById('mainContent').style.display = show ? 'grid' : 'none';
+}
+
+function expandProjectSection() {
+  projectExpanded = true;
+  renderProjectExpansion();
+}
+
+function toggleProjectSetupMenu() {
+  const submenu = document.getElementById('projectSetupSubmenu');
+  const caret = document.getElementById('projectSetupCaret');
+  const opening = submenu.style.display === 'none';
+  submenu.style.display = opening ? 'flex' : 'none';
+  caret.classList.toggle('open', opening);
+}
+
+// A sidebar shortcut into a specific step - the href (/?step=N) is what
+// makes this work from Repository/Admin (real navigation back to the
+// dashboard, which reads ?step= on load - see start() below). Already
+// being on the dashboard, though, a full reload would be a needless
+// flash; this intercepts that one case for a smooth in-page jump instead
+// and lets every other page's identical link navigate normally.
+function jumpToStep(n, event) {
+  if (!currentProjectId) return true;
+  if (event) event.preventDefault();
+  document.getElementById('projectSetupSubmenu').style.display = 'flex';
+  document.getElementById('projectSetupCaret').classList.add('open');
+  expandProjectSection();
+  goToStep(n);
+  document.getElementById('thisProjectAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return false;
+}
+
 // Data-driven on purpose: adding a future step/agent means adding one
 // entry here plus one <section class="step-panel" data-step="N"> in
 // the HTML - the stepper's rendering, navigation, and done-indicators
@@ -1010,15 +1070,12 @@ async function loadProjects() {
   renderProjectsTable();
 
   if (!projects.length) {
-    document.getElementById('stepper').style.display = 'none';
-    document.getElementById('mainContent').style.display = 'none';
-    document.getElementById('summaryPanel').style.display = 'none';
+    projectExpanded = false;
+    renderProjectExpansion();
     document.getElementById('firstRun').style.display = 'flex';
     document.getElementById('projectTitle').textContent = 'No project';
     return false;
   }
-  document.getElementById('stepper').style.display = 'flex';
-  document.getElementById('mainContent').style.display = 'grid';
   document.getElementById('firstRun').style.display = 'none';
 
   const select = document.getElementById('projectSelect');
@@ -1036,6 +1093,7 @@ async function loadProjects() {
   document.getElementById('projectTitle').textContent = activeProject ? activeProject.name : 'No project';
   renderKeywordsLine(activeProject);
   renderProjectsTable();
+  renderProjectExpansion();
 
   if (!stepInitialized) {
     stepInitialized = true;
@@ -1052,16 +1110,25 @@ function renderProjectsTable() {
     body.innerHTML = '<tr><td colspan="4" class="proj-domain">No projects yet - use "+ New Project" above to create one.</td></tr>';
     return;
   }
-  body.innerHTML = allProjects.map(p => `
+  body.innerHTML = allProjects.map(p => {
+    const isCurrentAndOpen = p.id === currentProjectId && projectExpanded;
+    const snippet = p.latest_brief_snippet
+      ? `<div class="proj-summary-snippet">${p.latest_brief_snippet}</div>`
+      : '<div class="proj-summary-snippet proj-summary-empty">No summary yet</div>';
+    return `
     <tr class="${p.id === currentProjectId ? 'current-row' : ''}">
-      <td class="proj-name">${p.name}</td>
+      <td>
+        <div class="proj-name">${p.name}</div>
+        ${snippet}
+      </td>
       <td class="proj-domain">${p.domain || '—'}</td>
       <td class="proj-counts">${p.meetings_count + p.documents_count} synced · ${p.decisions_count} decisions</td>
-      <td>${p.id === currentProjectId
+      <td>${isCurrentAndOpen
         ? '<span class="current-pill">current</span>'
         : `<button class="open-btn" onclick="onProjectSelect(${p.id})">Open →</button>`}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderKeywordsLine(project) {
@@ -1265,8 +1332,10 @@ async function onProjectSelect(id) {
   document.getElementById('projectNewForm').classList.remove('open');
   document.getElementById('teamOverlay').classList.remove('open');
   await loadProjects();
+  expandProjectSection();
   goToStep(pickDefaultStep(allProjects.find(p => p.id === currentProjectId)));
   await refreshAll();
+  document.getElementById('thisProjectAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function toggleNewProject() {
@@ -1289,9 +1358,11 @@ async function submitNewProject(name, domain) {
   }
   const newProject = await res.json();
   await loadProjects();
+  expandProjectSection();
   goToStep(2);
   await refreshAll();
   await maybeOfferExistingToNewProject(newProject.id, newProject.name);
+  document.getElementById('thisProjectAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
   return res;
 }
 
@@ -1361,12 +1432,13 @@ async function refreshAll() {
 // see /api/run/{module_id} in main.py. This just displays whatever the
 // latest one says, plus a manual Regenerate button for "I want it now."
 async function loadProjectSummary() {
-  const panel = document.getElementById('summaryPanel');
-  if (!currentProjectId) { panel.style.display = 'none'; return; }
+  // Visibility of the panel is owned by renderProjectExpansion() - this
+  // only fills in its content, so it can safely run even while the
+  // section is currently collapsed (e.g. right after a background sync).
+  if (!currentProjectId) return;
   const res = await apiFetch('/api/records/briefs');
   const briefs = await res.json();
   const latest = briefs && briefs.length ? briefs[0] : null;
-  panel.style.display = 'block';
   const content = document.getElementById('summaryContent');
   const time = document.getElementById('summaryTime');
   if (!latest) {
@@ -1845,6 +1917,18 @@ function timeAgo(iso) {
   fetchEvents();
   loadProjectSummary();
   setInterval(fetchEvents, 5000);
+
+  const stepParam = parseInt(params.get('step'), 10);
+  if (stepParam && currentProjectId) {
+    jumpToStep(stepParam);
+    window.history.replaceState({}, '', '/');
+  } else if (params.get('expand') === '1' && currentProjectId) {
+    // Generic "take me back into my project" link (Repository/Admin's
+    // "Back to project") - no specific step in mind, just resume wherever
+    // pickDefaultStep would land a freshly-opened project.
+    jumpToStep(pickDefaultStep(allProjects.find(p => p.id === currentProjectId)));
+    window.history.replaceState({}, '', '/');
+  }
 })();
 </script>
 </body>

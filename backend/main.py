@@ -364,12 +364,28 @@ def clear_api_key(provider: str = "anthropic", user: User = Depends(get_current_
 
 # ---------- Projects ----------
 
+def _snippet(text, length=160):
+    """A short, plain-text preview of a longer document - strips markdown
+    headers/emphasis markers and collapses whitespace so a truncated brief
+    reads as a clean sentence fragment in a table row, not a chopped-off
+    '### Head' with stray asterisks."""
+    if not text:
+        return None
+    import re
+    plain = re.sub(r"[#*_`]+", "", text)
+    plain = " ".join(plain.split())
+    if len(plain) <= length:
+        return plain
+    return plain[:length].rsplit(" ", 1)[0] + "…"
+
+
 @app.get("/api/projects")
 def list_projects(user: User = Depends(get_current_user)):
     session = SessionLocal()
     projects = session.query(Client).order_by(Client.created_at.asc()).all()
     out = []
     for p in projects:
+        latest_brief = session.query(Brief).filter_by(client_id=p.id).order_by(Brief.id.desc()).first()
         out.append({
             "id": p.id,
             "name": p.name,
@@ -387,6 +403,7 @@ def list_projects(user: User = Depends(get_current_user)):
             "documents_count": session.query(Document).filter_by(client_id=p.id).count(),
             "decisions_count": session.query(Decision).filter_by(client_id=p.id).count(),
             "action_items_count": session.query(ActionItem).filter_by(client_id=p.id).count(),
+            "latest_brief_snippet": _snippet(latest_brief.content) if latest_brief else None,
         })
     session.close()
     return out

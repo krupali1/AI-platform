@@ -108,6 +108,7 @@
   }
   .sidebar-item:hover { background: var(--accent-bg); }
   .sidebar-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .sidebar-subitem { padding-left: 26px; font-size: 12.5px; }
   .sidebar-project-name {
     font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
     padding: 4px 12px 10px;
@@ -133,7 +134,11 @@
       <div class="sidebar-label">This Project</div>
       <div class="sidebar-project-name" id="projectTitle">…</div>
       <a class="sidebar-item active" href="/repository">Repository</a>
-      <a class="sidebar-item" href="/#thisProjectAnchor">Back to project</a>
+      <div class="sidebar-item" style="cursor:default;">Project Setup</div>
+      <a class="sidebar-item sidebar-subitem" href="/?step=1">1. Set up project</a>
+      <a class="sidebar-item sidebar-subitem" href="/?step=2">2. Extract &amp; store</a>
+      <a class="sidebar-item sidebar-subitem" href="/?step=3">3. Ask &amp; Search</a>
+      <a class="sidebar-item" href="/?expand=1">Back to project</a>
       <div class="sidebar-label">Account</div>
       <a class="sidebar-item" href="/auth/logout">Sign out</a>
     </nav>
