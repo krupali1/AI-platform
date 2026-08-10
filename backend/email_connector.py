@@ -86,7 +86,12 @@ def run_gmail(session, client):
 
         service = build("gmail", "v1", credentials=creds)
 
-        clauses = [f'subject:"{project_name}"']
+        # Gmail's search syntax gives special meaning to ", (, and ) - a
+        # project name containing any of those (e.g. "SBAMI (Sri Balaji
+        # Trust)") would otherwise break out of the quoted phrase or open
+        # an unbalanced group and get the whole query rejected as invalid.
+        safe_name = project_name.replace('"', "").replace("(", "").replace(")", "")
+        clauses = [f'subject:"{safe_name}"']
         if domain:
             clauses.append(f"from:@{domain}")
             clauses.append(f"to:@{domain}")

@@ -173,5 +173,5 @@ def _demo_summary(content):
     if excerpt and not excerpt.endswith((".", "!", "?")):
         excerpt += "."
     if not excerpt:
-        return "Demo mode - no Anthropic key set for this account, and no content to summarize."
-    return f"Demo mode (no Anthropic key set for this account, so this is the opening of the raw content, not a real synthesized summary): {excerpt}"
+        return "Demo mode - no AI provider key set for this account, and no content to summarize."
+    return f"Demo mode (no AI provider key set for this account, so this is the opening of the raw content, not a real synthesized summary): {excerpt}"

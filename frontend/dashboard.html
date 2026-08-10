@@ -1012,7 +1012,14 @@ function jumpToStep(n, event) {
   document.getElementById('projectSetupCaret').classList.add('open');
   expandProjectSection();
   goToStep(n);
-  document.getElementById('thisProjectAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Scroll to the stepper itself, not thisProjectAnchor - the summary panel
+  // above it can be long, and scrolling to the anchor left the actual step
+  // content (what was clicked) below the fold instead of at the top.
+  // Instant, not smooth: this fires right at page load for the ?step=/
+  // ?expand= entry points (Repository/Admin's sidebar links), where a
+  // smooth-scroll animation kicked off that early is unreliable - jumping
+  // straight there is also just more correct UX for "take me to X".
+  document.getElementById('stepper').scrollIntoView({ behavior: 'auto', block: 'start' });
   return false;
 }
 
@@ -1558,7 +1565,14 @@ async function saveProviderSettings() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: key, provider }),
     });
-    if (keyRes.ok) keyInput.value = '';
+    if (keyRes.ok) {
+      keyInput.value = '';
+    } else {
+      const body = await keyRes.json().catch(() => ({}));
+      alert(body.detail || 'Provider saved, but the API key could not be stored - it is still empty. Try again.');
+      await loadMe();
+      return;
+    }
   }
   await loadMe();
 }
@@ -1923,19 +1937,28 @@ function timeAgo(iso) {
   await loadProjects();
   fetchModules();
   fetchEvents();
-  loadProjectSummary();
   setInterval(fetchEvents, 5000);
 
   const stepParam = parseInt(params.get('step'), 10);
-  if (stepParam && currentProjectId) {
-    jumpToStep(stepParam);
+  const expandParam = params.get('expand') === '1';
+  if ((stepParam || expandParam) && currentProjectId) {
+    // Wait for the summary panel's real content before scrolling to a step -
+    // otherwise the jump happens while the panel is still its short "loading"
+    // height, and the summary fetch resolving a moment later (long real
+    // briefs especially) grows the panel and pushes the step content back
+    // out of view with no re-scroll to follow it.
+    await loadProjectSummary();
+    if (stepParam) {
+      jumpToStep(stepParam);
+    } else {
+      // Generic "take me back into my project" link (Repository/Admin's
+      // "Back to project") - no specific step in mind, just resume wherever
+      // pickDefaultStep would land a freshly-opened project.
+      jumpToStep(pickDefaultStep(allProjects.find(p => p.id === currentProjectId)));
+    }
     window.history.replaceState({}, '', '/');
-  } else if (params.get('expand') === '1' && currentProjectId) {
-    // Generic "take me back into my project" link (Repository/Admin's
-    // "Back to project") - no specific step in mind, just resume wherever
-    // pickDefaultStep would land a freshly-opened project.
-    jumpToStep(pickDefaultStep(allProjects.find(p => p.id === currentProjectId)));
-    window.history.replaceState({}, '', '/');
+  } else {
+    loadProjectSummary();
   }
 })();
 </script>

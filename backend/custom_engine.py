@@ -106,8 +106,8 @@ def _run_live(llm_config, prompt_template, records_text):
 
 def _run_demo(engine, type_names):
     return (
-        f"Demo mode - no Anthropic key set for this account. This agent would read "
+        f"Demo mode - no AI provider key set for this account. This agent would read "
         f"{', '.join(type_names) or 'nothing selected'} for this project and follow the prompt: "
         f"\"{engine.prompt_template[:200]}{'...' if len(engine.prompt_template) > 200 else ''}\". "
-        f"Add an Anthropic API key in the header to run it for real."
+        f"Add a provider and API key in the header to run it for real."
     )
