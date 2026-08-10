@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import asyncio
 import datetime
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
@@ -81,6 +82,22 @@ def get_user_llm_config(user):
     }
 
 
+def get_automation_llm_config():
+    """Same shape as get_user_llm_config, for the background auto-sync loop
+    below, which has no signed-in user to draw a preferred provider/key
+    from. Only the server-wide Anthropic fallback applies here - if that
+    isn't set, extraction/brief/contradiction-check run in demo mode, same
+    as a manual RUN click from a user with no key of their own."""
+    if not ANTHROPIC_SERVER_KEY:
+        return None
+    return {
+        "provider": "anthropic",
+        "model": llm_client.SUGGESTED_MODELS.get("anthropic", ""),
+        "api_key": ANTHROPIC_SERVER_KEY,
+        "endpoint_url": None,
+    }
+
+
 def get_current_project(request: Request, session):
     """Reads the selected project id out of the session. Returns the
     Client row, or None if no project has been created/selected yet.
@@ -107,6 +124,7 @@ def startup():
     init_db()
     _seed_builtin_connectors()
     _migrate_scope_to_project_links()
+    asyncio.create_task(_auto_sync_loop())
 
 
 def _migrate_scope_to_project_links():
@@ -1255,6 +1273,103 @@ def oauth_provider_callback(request: Request, code: str = None, state: str = Non
 
 NEEDS_USER_KEY = {"extraction-engine", "brief-generator", "contradiction-detector"}
 CONTENT_CONNECTOR_MODULES = {"fireflies-connector", "drive-connector", "gmail-connector"}
+
+# How often the background loop below checks every project for new content -
+# minutes, not seconds, since this is a poll, not a push subscription (no
+# webhook receivers for Fireflies/Drive/Gmail here). 15 is a reasonable
+# default for "shows up automatically without being instant"; override with
+# AUTO_SYNC_INTERVAL_MINUTES in .env if a project needs it tighter or looser.
+AUTO_SYNC_INTERVAL_MINUTES = int(os.getenv("AUTO_SYNC_INTERVAL_MINUTES", "15"))
+
+
+def _project_has_drive_credential(client):
+    return bool(client.encrypted_drive_refresh_token or client.encrypted_drive_credentials)
+
+
+def run_auto_sync_for_project(session, client):
+    """The unattended version of clicking RUN on every connected connector,
+    then Extract & store, then the brief - run on a timer for every project,
+    not triggered by a person. Deliberately skips any connector that has no
+    real credential/connection rather than falling back to demo mode the way
+    a manual RUN does - silently seeding a real project with fake sample
+    data on a schedule would be actively harmful, not just unhelpful."""
+    synced_any = False
+
+    if client.encrypted_fireflies_key:
+        try:
+            if connectors.run_fireflies(session, client).get("synced", 0) > 0:
+                synced_any = True
+        except Exception as e:
+            print(f"[auto-sync] fireflies failed for project {client.id}: {e}", flush=True)
+
+    if _project_has_drive_credential(client):
+        try:
+            if connectors.run_drive(session, client).get("synced", 0) > 0:
+                synced_any = True
+        except Exception as e:
+            print(f"[auto-sync] drive failed for project {client.id}: {e}", flush=True)
+        try:
+            if email_connector.run_gmail(session, client).get("synced", 0) > 0:
+                synced_any = True
+        except Exception as e:
+            print(f"[auto-sync] gmail failed for project {client.id}: {e}", flush=True)
+
+    rest_conns = (
+        session.query(RestConnector)
+        .join(RestConnectorProject, RestConnectorProject.connector_id == RestConnector.id)
+        .filter(RestConnectorProject.client_id == client.id)
+        .all()
+    )
+    for rc in rest_conns:
+        if rc.auth_style == "header":
+            has_cred = session.query(RestConnectorCredential).filter_by(connector_id=rc.id, client_id=client.id).first() is not None
+        elif rc.auth_style == "google_oauth":
+            has_cred = _project_has_drive_credential(client)
+        else:  # oauth_provider
+            has_cred = session.query(OAuthConnection).filter_by(provider_id=rc.oauth_provider_id, client_id=client.id).first() is not None
+        if not has_cred:
+            continue
+        try:
+            if rest_connector.run_rest_connector(session, client, rc).get("synced", 0) > 0:
+                synced_any = True
+        except Exception as e:
+            print(f"[auto-sync] connector '{rc.display_name}' failed for project {client.id}: {e}", flush=True)
+
+    if synced_any:
+        llm_config = get_automation_llm_config()
+        for step_name, step in (
+            ("extraction", lambda: extraction.run_extraction(session, client, llm_config=llm_config)),
+            ("contradiction-check", lambda: contradiction.run_contradiction_check(session, client, llm_config=llm_config)),
+            ("brief", lambda: brief_module.generate_brief(session, client, llm_config=llm_config)),
+        ):
+            try:
+                step()
+            except Exception as e:
+                print(f"[auto-sync] {step_name} failed for project {client.id}: {e}", flush=True)
+
+    return synced_any
+
+
+async def _auto_sync_loop():
+    """Runs for the lifetime of the process. A single asyncio task, not a
+    separate worker/queue - fine at this app's scale (one web process), but
+    means running two instances of this service would double up the work,
+    not distribute it. Each project's sync is pushed to a thread since
+    connectors.run_* and friends are synchronous/blocking (requests, DB
+    calls) - running them directly on the event loop would stall every
+    incoming HTTP request for the duration of each project's sync."""
+    loop = asyncio.get_event_loop()
+    while True:
+        await asyncio.sleep(AUTO_SYNC_INTERVAL_MINUTES * 60)
+        session = SessionLocal()
+        try:
+            for client in session.query(Client).all():
+                try:
+                    await loop.run_in_executor(None, run_auto_sync_for_project, session, client)
+                except Exception as e:
+                    print(f"[auto-sync] project {client.id} failed: {e}", flush=True)
+        finally:
+            session.close()
 
 
 @app.post("/api/run/{module_id}")
