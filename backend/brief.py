@@ -13,7 +13,9 @@ from models import Meeting, Document, Decision, ActionItem, OpenQuestion, Brief,
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-BRIEF_PROMPT = """Write a status brief for this consulting engagement, using only the records below. Write it as a real document someone could send to catch a colleague up cold - not a bullet dump. Cover: what this engagement is and where it stands, what's been decided, what's still open or at risk, and what's outstanding. Plain prose in short paragraphs, a few headers if useful. Do not invent anything not present in the records.
+BRIEF_PROMPT = """Write a complete status summary for this consulting engagement, using only the records below. The reader has never seen this project before and needs to come away fully understanding it: the context and background, everything discussed across meetings and documents, what's been decided and why, what's still open or at risk, what's outstanding, and any other detail that matters to genuinely understanding where this engagement stands. Be thorough, not brief - cover everything relevant in the records rather than compressing to a highlight reel. Organize it however the content actually calls for - by topic, by workstream, chronologically, whatever fits - using headers where they help a reader navigate a long document.
+
+Do not open with any preamble, meta-commentary, or restatement of what this document is (no "Here is a status brief...", no "This document summarizes...", no generic "Overview" header to start). Begin directly with the actual substance - the first words on the page should be real content about the engagement itself. Do not invent anything not present in the records.
 
 RECORDS:
 {records}
@@ -77,7 +79,7 @@ def _generate_live(llm_config, records_text):
     import llm_client
     return llm_client.complete(
         llm_config["provider"], llm_config["api_key"], llm_config["model"],
-        BRIEF_PROMPT.format(records=records_text[:20000]), max_tokens=1500,
+        BRIEF_PROMPT.format(records=records_text[:60000]), max_tokens=4000,
         endpoint_url=llm_config.get("endpoint_url"),
     )
 

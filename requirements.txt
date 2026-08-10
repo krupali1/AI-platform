@@ -6,6 +6,8 @@ requests
 python-dotenv
 google-api-python-client
 google-auth
+pypdf
+python-docx
 anthropic
 authlib
 itsdangerous

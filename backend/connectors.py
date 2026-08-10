@@ -350,8 +350,19 @@ def run_drive(session, client):
                     candidates[f["id"]] = f
 
         count = 0
+        backfilled = 0
         for f in candidates.values():
-            if session.query(Document).filter_by(client_id=client.id, external_id=f["id"]).first():
+            existing = session.query(Document).filter_by(client_id=client.id, external_id=f["id"]).first()
+            if existing:
+                # Documents synced before real content-extraction covered
+                # this file's type got stuck with the old placeholder text
+                # forever, since the dedup check above would otherwise skip
+                # them on every later sync - this is the one-time repair for
+                # that, not an ongoing re-fetch of documents that already
+                # have real content.
+                if not existing.content or existing.content.startswith(_UNREAD_PLACEHOLDER_PREFIX):
+                    existing.content = _read_drive_content(service, f)
+                    backfilled += 1
                 continue
             content = _read_drive_content(service, f)
             session.add(Document(
@@ -371,22 +382,78 @@ def run_drive(session, client):
             criteria.append(f"shared with @{domain} (scanned last {DOMAIN_SCAN_LIMIT} files, {domain_matched} matched)")
         else:
             criteria.append("no client domain set - domain matching skipped")
+        backfill_note = f", backfilled content for {backfilled} previously-unreadable document(s)" if backfilled else ""
         _log(session, client, "drive-connector", "success",
-             f"Synced {count} new document(s) via {cred_source} - {'; '.join(criteria)}")
-        return {"synced": count, "demo": False}
+             f"Synced {count} new document(s){backfill_note} via {cred_source} - {'; '.join(criteria)}")
+        # Counted together so a backfill-only run (nothing new, but old
+        # documents just became readable) still triggers extraction/brief
+        # regeneration downstream, same as an actual new sync would.
+        return {"synced": count + backfilled, "demo": False}
     except Exception as e:
         _log(session, client, "drive-connector", "error", f"Drive sync failed: {e}")
         raise
 
 
+# Marker stored on Document.content for file types _read_drive_content
+# couldn't extract real text from - lets a later sync recognize and retry
+# them once support for that type is added, instead of treating "already
+# has a row" as "already has real content forever". Kept as the same
+# literal "[binary file:" prefix used before this fix, on purpose - that's
+# what's already sitting in Document.content for every document synced
+# under the old code, and the backfill below needs to recognize those too.
+_UNREAD_PLACEHOLDER_PREFIX = "[binary file:"
+
+# Native Google formats export directly as plain text/CSV via the Drive
+# API - no need to download and parse raw bytes for these.
+_GOOGLE_EXPORT_MIME = {
+    "application/vnd.google-apps.document": "text/plain",
+    "application/vnd.google-apps.presentation": "text/plain",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+}
+
+# Plain-text-ish formats - the raw bytes already are the text, just decode.
+_PLAIN_TEXT_MIME = {"text/plain", "text/markdown", "text/csv", "application/json"}
+
+
 def _read_drive_content(service, f):
+    mime = f["mimeType"]
     try:
-        if f["mimeType"] == "application/vnd.google-apps.document":
-            data = service.files().export(fileId=f["id"], mimeType="text/plain").execute()
+        if mime in _GOOGLE_EXPORT_MIME:
+            data = service.files().export(fileId=f["id"], mimeType=_GOOGLE_EXPORT_MIME[mime]).execute()
             return data.decode("utf-8") if isinstance(data, bytes) else str(data)
-        return f"[binary file: {f['mimeType']}]"
-    except Exception:
+
+        if mime in _PLAIN_TEXT_MIME:
+            data = service.files().get_media(fileId=f["id"]).execute()
+            return data.decode("utf-8", errors="ignore") if isinstance(data, bytes) else str(data)
+
+        if mime == "application/pdf":
+            data = service.files().get_media(fileId=f["id"]).execute()
+            return _extract_pdf_text(data)
+
+        if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            data = service.files().get_media(fileId=f["id"]).execute()
+            return _extract_docx_text(data)
+
+        # Genuinely no text to pull out (images, zips, binaries, etc.) -
+        # empty, not a placeholder, so extraction correctly skips it rather
+        # than wasting an API call summarizing a tag that says nothing.
         return ""
+    except Exception:
+        return f"{_UNREAD_PLACEHOLDER_PREFIX} {mime}]"
+
+
+def _extract_pdf_text(data):
+    import io
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    return "\n".join((page.extract_text() or "") for page in reader.pages)
+
+
+def _extract_docx_text(data):
+    import io
+    from docx import Document as DocxFile
+    doc = DocxFile(io.BytesIO(data))
+    return "\n".join(p.text for p in doc.paragraphs)
 
 
 def _demo_documents(client):
