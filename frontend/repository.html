@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Repository · Client Memory Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --panel-raised: #fbfaf8; --border: #e6e3dd;
+    --text: #1c1b19; --text-muted: #75716a; --accent: #b5651d; --accent-bg: #f6ece2;
+    --bad: #c0392b; --bad-bg: #fbeae8;
+    --shadow-sm: 0 1px 2px rgba(28,27,25,0.05), 0 1px 3px rgba(28,27,25,0.06);
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .title { font-family: var(--mono); letter-spacing: 0.04em; font-size: 14px; color: var(--text); font-weight: 600; }
+  .title strong { color: var(--text); }
+  a.back {
+    font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+    text-decoration: none; border: 1px solid var(--border); padding: 5px 10px; border-radius: 6px;
+  }
+  a.back:hover { color: var(--text); border-color: var(--accent); }
+
+  main { max-width: 900px; margin: 0 auto; padding: 28px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tab {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--text-muted); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 14px; cursor: pointer;
+  }
+  .tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+
+  .bulk-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .bulk-bar-right { display: flex; gap: 8px; }
+  .delete-all-btn {
+    font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; cursor: pointer;
+  }
+  .delete-all-btn:hover { color: var(--bad); border-color: var(--bad); }
+  .select-all {
+    display: flex; align-items: center; gap: 8px; font-family: var(--mono);
+    font-size: 11.5px; color: var(--text-muted); cursor: pointer;
+  }
+  .select-all input, .item-checkbox { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .bulk-delete-btn {
+    font-family: var(--mono); font-size: 11.5px; color: var(--bad);
+    background: var(--panel); border: 1px solid var(--bad); border-radius: 6px;
+    padding: 6px 12px; cursor: pointer;
+  }
+  .bulk-delete-btn:hover { background: var(--bad-bg); }
+
+  .item { display: flex; gap: 12px; align-items: flex-start; }
+  .item-body { flex: 1; min-width: 0; cursor: pointer; }
+
+  .item {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; margin-bottom: 10px; cursor: pointer; box-shadow: var(--shadow-sm);
+  }
+  .item-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .item-title { font-weight: 600; font-size: 14.5px; }
+  .item-meta { font-family: var(--mono); font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .item-summary { color: var(--text-muted); font-size: 13px; line-height: 1.55; margin-top: 8px; }
+  .item-detail { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .item.open .item-detail { display: block; }
+  .item-detail pre {
+    white-space: pre-wrap; font-family: var(--mono); font-size: 12px; color: var(--text);
+    background: var(--panel-raised); border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    max-height: 320px; overflow-y: auto; margin: 0 0 10px;
+  }
+  .item-source {
+    display: inline-block; font-family: var(--mono); font-size: 11.5px;
+    color: var(--accent); text-decoration: none;
+  }
+  .item-source:hover { text-decoration: underline; }
+  .item-actions { display: flex; justify-content: space-between; align-items: center; }
+  .item-delete {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 10px; cursor: pointer;
+  }
+  .item-delete:hover { color: var(--bad); border-color: var(--bad); }
+  .empty-note { color: var(--text-muted); font-size: 13px; padding: 30px 0; text-align: center; }
+
+  .app-shell { display: flex; min-height: calc(100vh - 57px); }
+  .sidebar {
+    width: 220px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--border); padding: 18px 0;
+  }
+  .sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+  .sidebar-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-muted); padding: 6px 12px; margin-top: 14px;
+  }
+  .sidebar-label:first-child { margin-top: 0; }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px;
+    color: var(--text); text-decoration: none; font-size: 13px; cursor: pointer;
+    background: transparent; border: none; width: 100%; text-align: left; font-family: var(--sans);
+  }
+  .sidebar-item:hover { background: var(--accent-bg); }
+  .sidebar-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .content-area { flex: 1; min-width: 0; }
+  @media (max-width: 720px) { .sidebar { display: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title">CLIENT MEMORY CONSOLE <span style="color:var(--text-muted)">·</span> <strong>REPOSITORY</strong></div>
+  <a class="back" href="/">← Console</a>
+</header>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <nav class="sidebar-nav">
+      <div class="sidebar-label">Workspace</div>
+      <a class="sidebar-item" href="/">Dashboard</a>
+      <a class="sidebar-item" href="/projects">All Projects</a>
+      <a class="sidebar-item active" href="/repository">Repository</a>
+      <a class="sidebar-item" id="sidebarAdminLink" href="/admin" style="display:none;">Admin</a>
+      <div class="sidebar-label">Account</div>
+      <a class="sidebar-item" href="/auth/logout">Sign out</a>
+    </nav>
+  </aside>
+
+  <div class="content-area">
+    <main>
+  <div class="tabs">
+    <button class="tab active" id="tabMeetings" onclick="showTab('meetings')">Meetings</button>
+    <button class="tab" id="tabDocuments" onclick="showTab('documents')">Documents</button>
+    <button class="tab" id="tabOpen_questions" onclick="showTab('open_questions')">Open questions</button>
+    <button class="tab" id="tabBriefs" onclick="showTab('briefs')">Briefs</button>
+    <button class="tab" id="tabContradictions" onclick="showTab('contradictions')">Contradictions</button>
+    <button class="tab" id="tabEngine_outputs" onclick="showTab('engine_outputs')">Agent outputs</button>
+  </div>
+  <div class="bulk-bar">
+    <label class="select-all">
+      <input type="checkbox" id="selectAllBox" onchange="toggleSelectAll(this.checked)" />
+      Select all
+    </label>
+    <div class="bulk-bar-right">
+      <button class="bulk-delete-btn" id="bulkDeleteBtn" style="display:none;" onclick="deleteSelected()">Delete selected (<span id="selectedCount">0</span>)</button>
+      <button class="delete-all-btn" id="deleteAllBtn" onclick="deleteAll()">Delete all</button>
+    </div>
+  </div>
+  <div id="list"></div>
+</main>
+  </div>
+</div>
+
+<script>
+async function apiFetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthenticated'); }
+  return res;
+}
+
+const TAB_IDS = ['meetings', 'documents', 'open_questions', 'briefs', 'contradictions', 'engine_outputs'];
+let currentTab = 'meetings';
+let cache = { meetings: null, documents: null, open_questions: null, briefs: null, contradictions: null, engine_outputs: null };
+let selected = { meetings: new Set(), documents: new Set(), open_questions: new Set(), briefs: new Set(), contradictions: new Set(), engine_outputs: new Set() };
+
+function showTab(tab) {
+  currentTab = tab;
+  TAB_IDS.forEach(t => {
+    document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', tab === t);
+  });
+  render();
+}
+
+async function load() {
+  const responses = await Promise.all(TAB_IDS.map(t => apiFetch(`/api/records/${t}`)));
+  const data = await Promise.all(responses.map(r => r.json()));
+  TAB_IDS.forEach((t, i) => { cache[t] = data[i]; });
+  render();
+}
+
+function render() {
+  const items = cache[currentTab];
+  const list = document.getElementById('list');
+  const sel = selected[currentTab];
+  updateBulkBar();
+  if (!items) { list.innerHTML = ''; return; }
+  if (!items.length) {
+    const hints = {
+      meetings: 'run the Fireflies or Gmail connector from the console first.',
+      documents: 'run the Drive or Gmail connector from the console first.',
+      open_questions: 'run the extraction engine from the console first.',
+      briefs: 'run the status brief generator from the console first.',
+      contradictions: 'run the contradiction detector from the console first - or there simply aren\'t any right now.',
+      engine_outputs: 'create a custom agent in Step 2 and run it first.',
+    };
+    list.innerHTML = `<div class="empty-note">No ${currentTab.replace('_', ' ')} yet - ${hints[currentTab] || ''}</div>`;
+    return;
+  }
+  list.innerHTML = items.map((item, i) => cardHtml(item, i, sel)).join('');
+}
+
+function cardHtml(item, i, sel) {
+  const checkbox = `<input type="checkbox" class="item-checkbox" ${sel.has(item.id) ? 'checked' : ''}
+       onchange="toggleSelect(${item.id}, this.checked)" onclick="event.stopPropagation()" />`;
+  const deleteBtn = `<button class="item-delete" onclick="event.stopPropagation(); deleteItem('${item.id}')">Delete</button>`;
+
+  if (currentTab === 'meetings' || currentTab === 'documents') {
+    const date = item.occurred_at || item.modified_at;
+    const dateStr = date ? new Date(date + (date.endsWith('Z') ? '' : 'Z')).toLocaleDateString() : '';
+    const summary = item.synthesized_summary || '(no summary yet - run the extraction engine)';
+    const fullText = currentTab === 'meetings' ? (item.transcript || item.summary || '') : (item.content || '');
+    return `
+      <div class="item" id="item-${i}">
+        ${checkbox}
+        <div class="item-body" onclick="toggleItem(${i})">
+          <div class="item-top">
+            <div class="item-title">${item.title || '(untitled)'}</div>
+            <div class="item-meta">${item.source} ${dateStr ? '· ' + dateStr : ''}</div>
+          </div>
+          <div class="item-summary">${summary}</div>
+          <div class="item-detail">
+            <pre>${escapeHtml(fullText) || '(no content stored)'}</pre>
+            <div class="item-actions">
+              ${item.source_url ? `<a class="item-source" href="${item.source_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">View source ↗</a>` : ''}
+              ${deleteBtn}
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  if (currentTab === 'open_questions') {
+    return `
+      <div class="item" id="item-${i}">
+        ${checkbox}
+        <div class="item-body" onclick="toggleItem(${i})">
+          <div class="item-top">
+            <div class="item-title">${item.description}</div>
+            <div class="item-meta">${item.status}</div>
+          </div>
+          <div class="item-detail">
+            <div class="item-summary">From ${item.source_type} #${item.source_id}</div>
+            <div class="item-actions">${deleteBtn}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  if (currentTab === 'briefs') {
+    const date = new Date(item.created_at + (item.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString();
+    return `
+      <div class="item" id="item-${i}">
+        ${checkbox}
+        <div class="item-body" onclick="toggleItem(${i})">
+          <div class="item-top">
+            <div class="item-title">Status brief</div>
+            <div class="item-meta">${date}</div>
+          </div>
+          <div class="item-summary">${(item.content || '').slice(0, 180)}${item.content && item.content.length > 180 ? '…' : ''}</div>
+          <div class="item-detail">
+            <pre>${escapeHtml(item.content || '')}</pre>
+            <div class="item-actions">${deleteBtn}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  if (currentTab === 'contradictions') {
+    return `
+      <div class="item" id="item-${i}">
+        ${checkbox}
+        <div class="item-body" onclick="toggleItem(${i})">
+          <div class="item-top">
+            <div class="item-title">${item.description || 'Possible contradiction'}</div>
+            <div class="item-meta">Decisions #${item.decision_a_id} &amp; #${item.decision_b_id}</div>
+          </div>
+          <div class="item-detail">
+            <div class="item-actions">${deleteBtn}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // engine_outputs - results from custom, config-driven agents
+  const date = new Date(item.created_at + (item.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString();
+  return `
+    <div class="item" id="item-${i}">
+      ${checkbox}
+      <div class="item-body" onclick="toggleItem(${i})">
+        <div class="item-top">
+          <div class="item-title">${item.engine_name || 'Agent output'}</div>
+          <div class="item-meta">${date}</div>
+        </div>
+        <div class="item-summary">${(item.content || '').slice(0, 180)}${item.content && item.content.length > 180 ? '…' : ''}</div>
+        <div class="item-detail">
+          <pre>${escapeHtml(item.content || '')}</pre>
+          <div class="item-actions">${deleteBtn}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function toggleSelect(id, checked) {
+  const sel = selected[currentTab];
+  if (checked) sel.add(id); else sel.delete(id);
+  updateBulkBar();
+}
+
+function toggleSelectAll(checked) {
+  const items = cache[currentTab] || [];
+  selected[currentTab] = checked ? new Set(items.map(i => i.id)) : new Set();
+  render();
+}
+
+function updateBulkBar() {
+  const count = selected[currentTab].size;
+  document.getElementById('selectedCount').textContent = count;
+  document.getElementById('bulkDeleteBtn').style.display = count > 0 ? 'inline-block' : 'none';
+  const items = cache[currentTab] || [];
+  document.getElementById('selectAllBox').checked = items.length > 0 && count === items.length;
+}
+
+async function deleteSelected() {
+  const ids = Array.from(selected[currentTab]);
+  if (!ids.length) return;
+  if (!confirm(`Remove ${ids.length} item(s) from the repository? This also removes any decisions or action items extracted from them. This cannot be undone.`)) return;
+  const res = await apiFetch(`/api/records/${currentTab}/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(body.detail || 'Could not delete');
+    return;
+  }
+  selected[currentTab] = new Set();
+  await load();
+}
+
+async function deleteAll() {
+  const items = cache[currentTab] || [];
+  if (!items.length) return;
+  const label = currentTab.replace('_', ' ');
+  if (!confirm(`Delete ALL ${items.length} ${label} for this project from the repository? This also removes every decision and action item extracted from them. This cannot be undone.`)) return;
+  const ids = items.map(i => i.id);
+  const res = await apiFetch(`/api/records/${currentTab}/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(body.detail || 'Could not delete');
+    return;
+  }
+  selected[currentTab] = new Set();
+  await load();
+}
+
+async function deleteItem(id) {
+  if (!confirm('Remove this from the repository? This also removes any decisions or action items extracted from it. This cannot be undone.')) return;
+  const res = await apiFetch(`/api/records/${currentTab}/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(body.detail || 'Could not delete');
+    return;
+  }
+  selected[currentTab].delete(Number(id));
+  await load();
+}
+
+function toggleItem(i) {
+  document.getElementById(`item-${i}`).classList.toggle('open');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+async function loadRole() {
+  const res = await apiFetch('/api/me');
+  const me = await res.json();
+  if (me.role === 'admin') {
+    document.getElementById('sidebarAdminLink').style.display = 'block';
+  }
+}
+
+load();
+loadRole();
+</script>
+</body>
+</html>

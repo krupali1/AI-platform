@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+requests
+python-dotenv
+google-api-python-client
+google-auth
+anthropic
+authlib
+itsdangerous
+cryptography
+httpx

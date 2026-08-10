@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin · Client Memory Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --panel-raised: #fbfaf8; --border: #e6e3dd;
+    --text: #1c1b19; --text-muted: #75716a; --accent: #b5651d; --accent-bg: #f6ece2;
+    --good: #1a8a5f; --bad: #c0392b;
+    --shadow-sm: 0 1px 2px rgba(28,27,25,0.05), 0 1px 3px rgba(28,27,25,0.06);
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .title { font-family: var(--mono); letter-spacing: 0.04em; font-size: 14px; color: var(--text); font-weight: 600; }
+  .title strong { color: var(--text); }
+  a.back {
+    font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+    text-decoration: none; border: 1px solid var(--border); padding: 5px 10px; border-radius: 6px;
+  }
+  a.back:hover { color: var(--text); border-color: var(--accent); }
+
+  main { max-width: 780px; margin: 0 auto; padding: 28px; }
+  .col-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+    color: var(--text-muted); text-transform: uppercase; margin-bottom: 14px;
+  }
+  table {
+    width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-sm);
+  }
+  th {
+    text-align: left; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-muted); font-weight: 500;
+    padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--panel-raised);
+  }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  .who { display: flex; align-items: center; gap: 10px; }
+  .who img { width: 28px; height: 28px; border-radius: 50%; }
+  .who .name { font-weight: 500; }
+  .who .email { color: var(--text-muted); font-family: var(--mono); font-size: 11.5px; }
+  select.role-select {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 12.5px; padding: 6px 28px 6px 8px; border-radius: 6px;
+    -webkit-appearance: none; -moz-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1L5 5L9 1' fill='none' stroke='%2375716a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+  }
+  .key-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .key-dot.yes { background: var(--good); }
+  .key-dot.no { background: var(--border); }
+  .joined { font-family: var(--mono); font-size: 11.5px; color: var(--text-muted); }
+  .row-msg { font-family: var(--mono); font-size: 10.5px; margin-top: 4px; height: 12px; }
+  .row-msg.ok { color: var(--good); }
+  .row-msg.err { color: var(--bad); }
+
+  .oauth-hint { color: var(--text-muted); font-size: 12.5px; line-height: 1.5; margin: 0 0 16px; }
+  .oauth-hint code { font-family: var(--mono); font-size: 11px; color: var(--text); background: var(--panel-raised); padding: 1px 5px; border-radius: 3px; }
+  .project-new-btn {
+    font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 14px; cursor: pointer; margin-top: 14px;
+  }
+  .project-new-btn:hover { color: var(--text); border-color: var(--accent); }
+  .provider-form {
+    display: none; flex-direction: column; gap: 8px; margin-top: 10px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; max-width: 420px;
+    box-shadow: var(--shadow-sm);
+  }
+  .provider-form.open { display: flex; }
+  .provider-form input {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 10px; border-radius: 6px;
+  }
+  .provider-form button.primary { border-color: var(--accent); color: #fff; background: var(--accent); border-radius: 6px; padding: 8px 14px; cursor: pointer; font-family: var(--mono); font-size: 12px; }
+  .provider-delete-btn {
+    font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+  }
+  .provider-delete-btn:hover { color: var(--bad); border-color: var(--bad); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title">SBAMI <span style="color:var(--text-muted)">·</span> <strong>ADMIN</strong></div>
+  <a class="back" href="/">← Console</a>
+</header>
+
+<main>
+  <div class="col-label">Team access</div>
+  <table>
+    <thead>
+      <tr><th>Person</th><th>Role</th><th>API key</th><th>Joined</th></tr>
+    </thead>
+    <tbody id="userRows"></tbody>
+  </table>
+
+  <div class="col-label" style="margin-top:32px;">OAuth providers</div>
+  <p class="oauth-hint">Register a new OAuth2 provider (Slack, or any other) - once added, anyone with admin/member access can build a "+ New connector" against it from the dashboard, and connect a project's account with one click, no code involved.</p>
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>Client ID</th><th>Scopes</th><th></th></tr>
+    </thead>
+    <tbody id="providerRows"></tbody>
+  </table>
+  <button class="project-new-btn" onclick="toggleNewProvider()">+ New OAuth provider</button>
+  <div class="provider-form" id="newProviderForm">
+    <input id="provName" type="text" placeholder="Name (e.g. Slack)" />
+    <input id="provAuthUrl" type="text" placeholder="Authorize URL (e.g. https://slack.com/oauth/v2/authorize)" />
+    <input id="provTokenUrl" type="text" placeholder="Token URL (e.g. https://slack.com/api/oauth.v2.access)" />
+    <input id="provClientId" type="text" placeholder="Client ID" />
+    <input id="provClientSecret" type="password" placeholder="Client secret" />
+    <input id="provScopes" type="text" placeholder="Scopes, in whatever format this provider expects" />
+    <p class="oauth-hint">Redirect URI to register with the provider: <code id="redirectUriHint"></code></p>
+    <button class="primary" onclick="createProvider()">Create provider</button>
+  </div>
+</main>
+
+<script>
+async function apiFetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthenticated'); }
+  if (res.status === 403) { window.location.href = '/'; throw new Error('forbidden'); }
+  return res;
+}
+
+async function loadUsers() {
+  const [usersRes, projectsRes] = await Promise.all([
+    apiFetch('/api/users'),
+    apiFetch('/api/projects'),
+  ]);
+  const users = await usersRes.json();
+  const projects = await projectsRes.json();
+  const body = document.getElementById('userRows');
+  body.innerHTML = users.map(u => `
+    <tr id="row-${u.id}">
+      <td>
+        <div class="who">
+          ${u.picture ? `<img src="${u.picture}" />` : ''}
+          <div>
+            <div class="name">${u.name || u.email}</div>
+            <div class="email">${u.email}</div>
+          </div>
+        </div>
+      </td>
+      <td>
+        <select class="role-select" id="role-${u.id}" onchange="onRoleChange(${u.id}, this.value)">
+          ${['admin', 'member', 'viewer', 'client'].map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}
+        </select>
+        <select class="role-select" id="lock-${u.id}" style="display:${u.role === 'client' ? 'inline-block' : 'none'}; margin-left:6px;" onchange="setRole(${u.id})">
+          <option value="">Which project?</option>
+          ${projects.map(p => `<option value="${p.id}" ${p.id === u.locked_project_id ? 'selected' : ''}>${p.name}</option>`).join('')}
+        </select>
+        <div class="row-msg" id="msg-${u.id}"></div>
+      </td>
+      <td><span class="key-dot ${u.has_api_key ? 'yes' : 'no'}"></span></td>
+      <td class="joined">${new Date(u.created_at + (u.created_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString()}</td>
+    </tr>
+  `).join('');
+}
+
+function onRoleChange(userId, role) {
+  const lockSelect = document.getElementById('lock-' + userId);
+  lockSelect.style.display = role === 'client' ? 'inline-block' : 'none';
+  if (role !== 'client') setRole(userId);
+  // if role === 'client', wait for the project picker's own onchange instead -
+  // setting the role without a project yet would just get rejected server-side.
+}
+
+async function setRole(userId) {
+  const role = document.getElementById('role-' + userId).value;
+  const lockSelect = document.getElementById('lock-' + userId);
+  const locked_project_id = role === 'client' ? parseInt(lockSelect.value, 10) : null;
+  if (role === 'client' && !locked_project_id) return;   // wait for a project to actually be picked
+  const msg = document.getElementById('msg-' + userId);
+  try {
+    const res = await apiFetch(`/api/users/${userId}/role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, locked_project_id }),
+    });
+    if (!res.ok) {
+      const body = await res.json();
+      msg.className = 'row-msg err';
+      msg.textContent = body.detail || 'Could not update role';
+      loadUsers();
+      return;
+    }
+    msg.className = 'row-msg ok';
+    msg.textContent = 'saved';
+    setTimeout(() => { msg.textContent = ''; }, 1500);
+  } catch (e) {
+    // apiFetch already redirected on 401/403
+  }
+}
+
+async function loadProviders() {
+  const res = await apiFetch('/api/oauth-providers');
+  const providers = await res.json();
+  document.getElementById('providerRows').innerHTML = providers.map(p => `
+    <tr>
+      <td>${p.name}</td>
+      <td class="joined">${p.slug}</td>
+      <td class="joined">${p.scopes || '—'}</td>
+      <td><button class="provider-delete-btn" onclick="deleteProvider(${p.id})">Delete</button></td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" class="joined">None yet</td></tr>';
+}
+
+function toggleNewProvider() {
+  const form = document.getElementById('newProviderForm');
+  form.classList.toggle('open');
+  document.getElementById('redirectUriHint').textContent = `${window.location.origin}/oauth/callback`;
+}
+
+async function createProvider() {
+  const name = document.getElementById('provName').value.trim();
+  const authorize_url = document.getElementById('provAuthUrl').value.trim();
+  const token_url = document.getElementById('provTokenUrl').value.trim();
+  const client_id = document.getElementById('provClientId').value.trim();
+  const client_secret = document.getElementById('provClientSecret').value.trim();
+  const scopes = document.getElementById('provScopes').value.trim();
+  if (!name || !authorize_url || !token_url || !client_id || !client_secret) {
+    alert('Name, both URLs, client ID, and client secret are all required.');
+    return;
+  }
+  const res = await apiFetch('/api/oauth-providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, authorize_url, token_url, client_id, client_secret, scopes }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(body.detail || 'Could not create provider');
+    return;
+  }
+  ['provName', 'provAuthUrl', 'provTokenUrl', 'provClientId', 'provClientSecret', 'provScopes']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('newProviderForm').classList.remove('open');
+  await loadProviders();
+}
+
+async function deleteProvider(id) {
+  if (!confirm('Delete this OAuth provider? Any connectors built on it, and any project connections to it, stop working.')) return;
+  await apiFetch(`/api/oauth-providers/${id}`, { method: 'DELETE' });
+  await loadProviders();
+}
+
+loadUsers();
+loadProviders();
+</script>
+</body>
+</html>

@@ -1,0 +1,1781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SBAMI · Client Memory Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --panel-raised: #fbfaf8;
+    --border: #e6e3dd;
+    --text: #1c1b19;
+    --text-muted: #75716a;
+    --accent: #b5651d;
+    --accent-dim: #f0dcc7;
+    --accent-bg: #f6ece2;
+    --good: #1a8a5f;
+    --bad: #c0392b;
+    --shadow-sm: 0 1px 2px rgba(28,27,25,0.05), 0 1px 3px rgba(28,27,25,0.06);
+    --shadow-md: 0 4px 10px rgba(28,27,25,0.06), 0 2px 4px rgba(28,27,25,0.05);
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header .title {
+    font-family: var(--mono);
+    letter-spacing: 0.04em;
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .live-pill {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--good);
+    border: 1px solid var(--good);
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--good);
+    box-shadow: 0 0 0 0 rgba(26,138,95,0.5);
+    animation: pulse 2.2s infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(26,138,95,0.4); }
+    70% { box-shadow: 0 0 0 6px rgba(26,138,95,0); }
+    100% { box-shadow: 0 0 0 0 rgba(26,138,95,0); }
+  }
+
+  .app-shell { display: flex; min-height: calc(100vh - 57px); }
+
+  .sidebar {
+    width: 220px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--border); padding: 18px 0;
+    display: flex; flex-direction: column;
+  }
+  .sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+  .sidebar-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-muted); padding: 6px 12px; margin-top: 14px;
+  }
+  .sidebar-label:first-child { margin-top: 0; }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px;
+    color: var(--text); text-decoration: none; font-size: 13px; cursor: pointer;
+    background: transparent; border: none; width: 100%; text-align: left; font-family: var(--sans);
+  }
+  .sidebar-item:hover { background: var(--accent-bg); }
+  .sidebar-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .sidebar-item .icon { width: 16px; text-align: center; flex-shrink: 0; }
+  .sidebar-project-name {
+    font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
+    padding: 4px 12px 10px;
+  }
+
+  .content-area { flex: 1; min-width: 0; }
+  .all-projects-section { padding: 24px 24px 0; background: var(--bg); }
+  .projects-table {
+    width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-sm);
+  }
+  .projects-table th {
+    text-align: left; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-muted); font-weight: 500;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel-raised);
+  }
+  .projects-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; font-size: 13px; }
+  .projects-table tr:last-child td { border-bottom: none; }
+  .projects-table tr.current-row { background: var(--accent-bg); }
+  .projects-table .proj-name { font-weight: 600; }
+  .projects-table .proj-domain { color: var(--text-muted); font-family: var(--mono); font-size: 11px; }
+  .projects-table .proj-counts { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .projects-table .open-btn {
+    font-family: var(--mono); font-size: 10.5px; color: var(--accent);
+    background: var(--panel); border: 1px solid var(--accent); border-radius: 6px;
+    padding: 5px 10px; cursor: pointer;
+  }
+  .projects-table .open-btn:hover { background: var(--accent-bg); }
+  .projects-table .current-pill {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 3px; padding: 2px 6px;
+  }
+  .this-project-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-muted); padding: 22px 24px 4px; background: var(--bg);
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: 1fr 44px;
+    gap: 1px;
+    background: var(--border);
+    transition: grid-template-columns 0.2s ease;
+  }
+  main.feed-expanded { grid-template-columns: 1fr 320px; }
+  .step-content { background: var(--bg); padding: 24px; min-height: 400px; }
+  .step-panel { display: none; }
+  .step-panel.active { display: block; }
+  .col-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  .stepper {
+    display: flex; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 24px;
+  }
+  .step-tab {
+    display: flex; align-items: center; gap: 9px;
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 14px 18px; cursor: pointer; font-family: var(--sans);
+  }
+  .step-tab .step-num {
+    display: flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--text-muted); border: 1px solid var(--border);
+  }
+  .step-tab .step-label {
+    font-size: 12.5px; color: var(--text-muted); white-space: nowrap;
+  }
+  .step-tab.done .step-num { color: var(--good); border-color: var(--good); }
+  .step-tab.active { border-bottom-color: var(--accent); }
+  .step-tab.active .step-num { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+  .step-tab.active .step-label { color: var(--text); font-weight: 600; }
+  .step-tab:hover .step-label { color: var(--text); }
+
+  .agent-form {
+    display: flex !important; flex-direction: column; align-items: stretch !important; gap: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+    box-shadow: var(--shadow-md); width: 100%; max-width: 480px;
+  }
+  .agent-form input[type="text"], .agent-form textarea {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 10px; border-radius: 6px;
+  }
+  .agent-form textarea { min-height: 70px; resize: vertical; }
+  .agent-reads, .agent-scope { display: flex; flex-wrap: wrap; gap: 10px; }
+  .project-checklist {
+    display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-raised);
+  }
+  .project-checklist label {
+    display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11.5px; color: var(--text);
+  }
+  .project-checklist input { accent-color: var(--accent); }
+  .project-checklist .empty-note { margin: 0; font-size: 11.5px; }
+  .agent-reads-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .agent-reads label, .agent-scope label {
+    display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+  }
+  .agent-reads input, .agent-scope input { accent-color: var(--accent); min-width: 0 !important; width: auto !important; flex: none !important; }
+  #connHeaderFields { display: flex; flex-direction: column; gap: 8px; }
+  .conn-cred-row { display: flex; gap: 6px; margin-top: 8px; }
+  .conn-cred-row input {
+    flex: 1; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 11.5px; padding: 7px 9px; border-radius: 6px;
+  }
+  .conn-cred-row button { flex-shrink: 0; }
+
+  .step-next-btn {
+    display: block; margin-top: 22px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--accent); background: var(--panel); border: 1px solid var(--accent);
+    border-radius: 6px; padding: 9px 16px; cursor: pointer; box-shadow: var(--shadow-sm);
+  }
+  .step-next-btn:hover { background: var(--accent-bg); }
+
+  @media (max-width: 720px) {
+    .stepper { padding: 0 12px; overflow-x: auto; }
+    .step-tab .step-label { display: none; }
+    .sidebar { display: none; }
+  }
+
+  .modules-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px;
+  }
+  .module-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+  }
+  .module-card .row { display: flex; align-items: center; justify-content: space-between; }
+  .module-card .card-fill { flex: 1; }
+  .module-name { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+  .custom-badge {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 3px; padding: 1px 5px;
+    vertical-align: middle;
+  }
+  .agent-delete-btn {
+    width: 100%; margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+    background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 0; cursor: pointer;
+  }
+  .agent-delete-btn:hover { color: var(--bad); border-color: var(--bad); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+  .status-dot.success { background: var(--good); }
+  .status-dot.error { background: var(--bad); }
+  .status-dot.running { background: var(--accent); animation: pulse 1s infinite; }
+  .module-desc { color: var(--text-muted); font-size: 11.5px; margin: 8px 0 10px; line-height: 1.45; }
+  .module-meta { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-bottom: 10px; }
+  .rw-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tag { font-family: var(--mono); font-size: 9.5px; padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border); color: var(--text-muted); }
+  button.run-btn {
+    width: 100%;
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.05em;
+    padding: 8px 0;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button.run-btn:hover { opacity: 0.88; }
+  button.run-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .feed-item {
+    display: flex;
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-time { font-family: var(--mono); font-size: 11px; color: var(--text-muted); white-space: nowrap; padding-top: 1px; }
+  .feed-module { font-family: var(--mono); font-size: 11px; color: var(--accent); white-space: nowrap; padding-top: 1px; }
+  .feed-msg { color: var(--text); line-height: 1.5; }
+  .feed-msg.error { color: var(--bad); }
+  .feed-msg.warning { color: var(--accent); }
+  .feed-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+  .feed-dot.success { background: var(--good); }
+  .feed-dot.warning { background: var(--accent); }
+  .feed-dot.error { background: var(--bad); }
+  #eventFeed { max-height: none; overflow-y: auto; margin-bottom: 0; }
+
+  .feed-column {
+    position: relative; overflow: hidden; padding: 0; background: var(--panel);
+    display: flex; flex-direction: column;
+  }
+  .feed-column-toggle {
+    position: sticky; top: 0; width: 44px; height: 44px; flex-shrink: 0;
+    background: var(--panel); border: none; border-bottom: 1px solid var(--border);
+    color: var(--text-muted); font-size: 16px; cursor: pointer;
+  }
+  .feed-column-toggle:hover { color: var(--accent); }
+  main.feed-expanded .feed-column-toggle { transform: scaleX(-1); }
+  .feed-column-content {
+    display: none; padding: 16px; overflow-y: auto; flex: 1;
+  }
+  main.feed-expanded .feed-column-content { display: block; }
+
+  @media (max-width: 720px) {
+    main, main.feed-expanded { grid-template-columns: 1fr; }
+    .feed-column { order: 3; }
+    .feed-column-toggle { width: 100%; height: 36px; }
+  }
+
+  .toast-stack {
+    position: fixed; top: 20px; right: 20px; z-index: 100;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .toast {
+    font-family: var(--mono); font-size: 12.5px; padding: 10px 16px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    box-shadow: var(--shadow-md); min-width: 220px;
+    animation: toast-in 0.2s ease-out;
+  }
+  .toast.success { border-color: var(--good); color: var(--good); }
+  .toast.warning { border-color: var(--accent); color: var(--accent); }
+  .toast.error { border-color: var(--bad); color: var(--bad); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .query-bar { display: flex; gap: 8px; margin-bottom: 20px; }
+  .step-hint { color: var(--text-muted); font-size: 12px; margin: -8px 0 12px; }
+  .answer-card {
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; font-size: 13.5px; line-height: 1.6;
+    box-shadow: var(--shadow-sm);
+  }
+  .answer-sources { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .answer-source-pill {
+    font-family: var(--mono); font-size: 11px; color: var(--accent); text-decoration: none;
+    border: 1px solid var(--accent-dim); border-radius: 999px; padding: 3px 10px;
+  }
+  .answer-source-pill:hover { background: var(--accent-bg); }
+  .answer-loading { color: var(--text-muted); font-family: var(--mono); font-size: 12px; margin-bottom: 20px; }
+  .query-bar input {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 11px 14px;
+    border-radius: 8px;
+  }
+  .query-bar input::placeholder { color: var(--text-muted); }
+  .query-bar input:focus { outline: none; border-color: var(--accent); }
+  .query-bar button {
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    padding: 0 20px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .results-group { margin-bottom: 18px; }
+  .results-group h4 {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 0 0 8px;
+  }
+  .result-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    box-shadow: var(--shadow-sm);
+  }
+  .result-card .rc-title { font-weight: 600; margin-bottom: 3px; }
+  .result-card .rc-sub { color: var(--text-muted); font-size: 11.5px; font-family: var(--mono); }
+  .result-card .rc-summary { color: var(--text); font-size: 12.5px; line-height: 1.5; margin-top: 6px; }
+  .result-card .rc-source {
+    display: inline-block; margin-top: 6px; font-family: var(--mono); font-size: 11px;
+    color: var(--accent); text-decoration: none;
+  }
+  .result-card .rc-source:hover { text-decoration: underline; }
+  .empty-note { color: var(--text-muted); font-size: 12.5px; font-style: italic; }
+
+  .header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; position: relative; }
+  .header-right-top { display: flex; align-items: center; gap: 14px; }
+  .header-dropdown {
+    position: absolute; top: 100%; right: 0; margin-top: 6px; z-index: 20;
+    background: var(--panel); box-shadow: var(--shadow-md); padding: 12px; border-radius: 8px;
+    flex-direction: column !important; align-items: stretch !important; min-width: 260px;
+  }
+  .admin-link {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em;
+    color: var(--text-muted); text-decoration: none; border: 1px solid var(--border);
+    padding: 5px 10px; border-radius: 6px; display: none;
+  }
+  .admin-link:hover { color: var(--text); border-color: var(--text-muted); }
+  .user-chip { display: flex; align-items: center; gap: 8px;
+    cursor: pointer; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid transparent;
+  }
+  .user-chip:hover { border-color: var(--border); }
+  .user-chip img { width: 24px; height: 24px; border-radius: 50%; }
+  .user-chip .email { font-family: var(--mono); font-size: 12px; color: var(--text-muted); }
+  .role-tag {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-muted);
+    border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px;
+  }
+  .read-only-note {
+    font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+    text-align: center; padding: 6px 0;
+  }
+
+  .project-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 24px; background: var(--panel); border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .project-bar select {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 12.5px; padding: 7px 32px 7px 10px; border-radius: 6px;
+    min-width: 200px;
+    -webkit-appearance: none; -moz-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1L5 5L9 1' fill='none' stroke='%2375716a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+  }
+  .header-create-row { display: flex; gap: 8px; }
+  .project-new-btn {
+    font-family: var(--mono); font-size: 11px; color: #fff;
+    background: var(--text); border: 1px solid var(--text); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  .project-new-btn:hover { opacity: 0.85; }
+  /* The three universal header actions (New Project/Agent/Connector) use the
+     site's orange-brown accent, not the neutral --text color .project-new-btn
+     defaults to - keeps them visually distinct as the primary create actions. */
+  .header-new-btn {
+    font-family: var(--mono); font-size: 11px; color: #fff;
+    background: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  .header-new-btn:hover { opacity: 0.85; }
+  .project-new-form {
+    display: none; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .project-new-form.open { display: flex; }
+  .project-new-form input {
+    background: var(--panel-raised); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 12px; padding: 7px 10px; border-radius: 6px;
+    min-width: 220px;
+  }
+  .project-new-form button.primary {
+    font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--accent);
+    color: #fff; background: var(--accent); border-radius: 6px; padding: 7px 12px; cursor: pointer;
+  }
+  .project-new-form button.primary:hover { opacity: 0.88; }
+  .project-new-form button.danger {
+    font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--bad);
+    color: var(--bad); background: var(--panel); border-radius: 6px; padding: 7px 12px; cursor: pointer;
+  }
+  .project-new-form button.danger:hover { background: var(--bad-bg, #fbeae8); }
+  .agent-form .btn-row { display: flex; gap: 8px; }
+  .agent-form .btn-row button { flex: 1; }
+  .empty-project-note { display: none; }
+  .keywords-line {
+    padding: 8px 24px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--text-muted); background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .keywords-line .kw-label { color: var(--text-muted); }
+  .keywords-line .kw-value { color: var(--text); }
+  .keywords-line .kw-hint { color: var(--text-muted); font-style: italic; }
+  .keywords-line.empty { color: var(--bad); }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(28,27,25,0.4);
+    z-index: 50; align-items: flex-start; justify-content: center;
+    padding: 70px 20px; overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .modal-header h4 { margin: 0; font-family: var(--mono); font-size: 13px; letter-spacing: 0.05em; }
+  .modal-close {
+    background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+    border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px;
+    flex: none !important; padding: 0 !important;
+  }
+  .modal-close:hover { color: var(--text); border-color: var(--text-muted); }
+  .team-panel-modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; box-shadow: var(--shadow-md); width: 100%; max-width: 900px;
+  }
+  .team-panel-inner {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  }
+  .tp-section {
+    background: var(--panel-raised); border: 1px solid var(--border); border-radius: 8px; padding: 16px;
+    display: flex; flex-direction: column;
+  }
+  .tp-fill { flex: 1; }
+  .tp-section h4 {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.05em;
+    margin: 0 0 8px; color: var(--text);
+  }
+  .tp-hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin: 0 0 10px; }
+  .tp-status { font-size: 11.5px; margin-bottom: 10px; font-family: var(--mono); }
+  .tp-status.set { color: var(--good); }
+  .tp-status.unset { color: var(--text-muted); }
+  .tp-section input, .tp-section textarea {
+    width: 100%; background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 11.5px;
+    padding: 8px 10px; border-radius: 6px; margin-bottom: 8px;
+  }
+  .tp-section textarea { height: 70px; resize: vertical; }
+  .tp-section .btn-row { display: flex; gap: 8px; }
+  .tp-section button {
+    font-family: var(--mono); font-size: 11px; padding: 7px 0; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text); flex: 1;
+  }
+  .tp-section button.primary { border-color: var(--accent); color: var(--accent); }
+  .tp-section button.danger { border-color: var(--bad); color: var(--bad); }
+  .drive-connect-btn {
+    display: block; width: 100%; text-align: center; text-decoration: none;
+    font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+    border: 1px solid var(--accent); color: var(--accent); background: transparent;
+    border-radius: 5px; padding: 8px 0; margin-bottom: 8px; cursor: pointer;
+  }
+  .drive-connect-btn:hover { background: var(--accent-dim); }
+  .tp-advanced-toggle {
+    display: block; width: 100%; background: none; border: none;
+    color: var(--text-muted); font-family: var(--mono); font-size: 10.5px;
+    text-align: left; padding: 8px 0 0; cursor: pointer;
+  }
+  .tp-advanced-toggle:hover { color: var(--text); }
+  .tp-advanced { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .tp-advanced.open { display: block; }
+  @media (max-width: 900px) { .team-panel-inner { grid-template-columns: 1fr; } }
+
+  .first-run { display: flex; justify-content: center; padding: 60px 28px; }
+  .first-run-card {
+    width: 420px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 30px;
+  }
+  .first-run-card h2 { font-size: 19px; margin: 0 0 8px; }
+  .first-run-card p { color: var(--text-muted); font-size: 13px; line-height: 1.5; margin: 0 0 20px; }
+  .first-run-card input {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 12.5px;
+    padding: 10px 12px; border-radius: 5px; margin-bottom: 10px;
+  }
+  .first-run-card button.primary {
+    width: 100%; font-family: var(--mono); font-size: 12px; font-weight: 600;
+    border: 1px solid var(--accent); color: var(--accent); background: transparent;
+    border-radius: 5px; padding: 10px 0; cursor: pointer; margin-top: 4px;
+  }
+  .first-run-card button.primary:hover { background: var(--accent-dim); }
+
+  .settings-panel {
+    width: 100%; max-width: 380px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px;
+    box-shadow: var(--shadow-md);
+  }
+  .settings-panel select {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 10px;
+    border-radius: 5px; margin-bottom: 8px; box-sizing: border-box;
+  }
+  .provider-keys-summary {
+    font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+    margin: 4px 0 12px; line-height: 1.6;
+  }
+  .provider-keys-summary .yes { color: var(--good); }
+  .settings-panel h4 {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-muted); margin: 0 0 10px;
+  }
+  .settings-panel .key-status { font-size: 12.5px; margin-bottom: 10px; }
+  .settings-panel .key-status.set { color: var(--good); }
+  .settings-panel .key-status.unset { color: var(--text-muted); }
+  .settings-panel input {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 12.5px;
+    padding: 9px 10px; border-radius: 5px; margin-bottom: 10px;
+  }
+  .settings-panel .btn-row { display: flex; gap: 8px; }
+  .settings-panel button {
+    flex: 1; font-family: var(--mono); font-size: 11.5px; padding: 8px 0;
+    border-radius: 5px; cursor: pointer; border: 1px solid var(--border);
+    background: transparent; color: var(--text);
+  }
+  .settings-panel button.primary { border-color: var(--accent); color: var(--accent); }
+  .settings-panel button.danger { border-color: var(--bad); color: var(--bad); }
+  .settings-panel .logout-link {
+    display: block; margin-top: 14px; font-family: var(--mono); font-size: 11px;
+    color: var(--text-muted); text-decoration: none;
+  }
+  .settings-panel .logout-link:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="toast-stack" id="toastStack"></div>
+
+<header>
+  <div class="title">CLIENT MEMORY CONSOLE</div>
+  <div class="header-right">
+    <div class="header-right-top">
+      <div class="live-pill"><span class="dot"></span> LIVE</div>
+      <div class="user-chip" id="userChip" onclick="toggleSettings()">
+        <img id="userPic" src="" style="display:none;" />
+        <span class="email" id="userEmail">…</span>
+        <span class="role-tag" id="roleTag"></span>
+      </div>
+    </div>
+    <div class="header-create-row">
+      <button class="header-new-btn" onclick="toggleNewProject()">+ New Project</button>
+      <button class="header-new-btn" onclick="toggleNewAgent()">+ New Agent</button>
+      <button class="header-new-btn" onclick="toggleNewConnector()">+ New Connector</button>
+    </div>
+    <div class="project-new-form header-dropdown" id="projectNewForm">
+      <input id="newProjectName" type="text" placeholder="Project name (e.g. LKS Law Firm)" />
+      <input id="newProjectDomain" type="text" placeholder="Client email domain, optional (e.g. lksfirm.com)" />
+      <button class="primary" onclick="createProject()">Create</button>
+    </div>
+  </div>
+</header>
+
+<div class="modal-overlay" id="newAgentOverlay" onclick="if(event.target===this) toggleNewAgent()">
+  <div class="project-new-form agent-form" id="newAgentForm">
+    <div class="modal-header">
+      <h4>New agent</h4>
+      <button class="modal-close" onclick="toggleNewAgent()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;">Available everywhere - pick which project it applies to below, or make it available to every project.</p>
+    <input id="agentName" type="text" placeholder="Agent name (e.g. Risk Tracker)" />
+    <input id="agentDescription" type="text" placeholder="One-line description" />
+    <div class="agent-reads">
+      <span class="agent-reads-label">Reads:</span>
+      <label><input type="checkbox" value="Meeting" checked /> Meetings</label>
+      <label><input type="checkbox" value="Document" checked /> Documents</label>
+      <label><input type="checkbox" value="Decision" /> Decisions</label>
+      <label><input type="checkbox" value="ActionItem" /> Action items</label>
+      <label><input type="checkbox" value="OpenQuestion" /> Open questions</label>
+      <label><input type="checkbox" value="Brief" /> Briefs</label>
+    </div>
+    <textarea id="agentPrompt" placeholder="What should this agent do with the records it reads? e.g. 'List anything that looks like a risk to this engagement succeeding.'"></textarea>
+    <span class="agent-reads-label">Applies to:</span>
+    <div id="agentProjectChecklist" class="project-checklist"></div>
+    <button class="primary" onclick="createAgent()">Create agent</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="newConnectorOverlay" onclick="if(event.target===this) toggleNewConnector()">
+  <div class="project-new-form agent-form" id="newConnectorForm">
+    <div class="modal-header">
+      <h4>New connector</h4>
+      <button class="modal-close" onclick="toggleNewConnector()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;">Available everywhere - pick which project it applies to below, or make it available to every project.</p>
+    <input id="connName" type="text" placeholder="Connector name (e.g. Slack)" />
+    <input id="connDescription" type="text" placeholder="One-line description" />
+    <div class="agent-scope">
+      <label><input type="radio" name="connAuth" value="header" checked onchange="toggleConnAuthFields()" /> Static API key</label>
+      <label><input type="radio" name="connAuth" value="google_oauth" onchange="toggleConnAuthFields()" /> Connected Google account</label>
+      <label><input type="radio" name="connAuth" value="oauth_provider" onchange="toggleConnAuthFields()" /> OAuth-connected app</label>
+    </div>
+    <div id="connGooglePresetFields" style="display:none;">
+      <select id="connGooglePreset" onchange="applyGooglePreset()">
+        <option value="">Custom - pick a known service, or fill in the fields below yourself</option>
+        <option value="calendar">Google Calendar - events matching this project</option>
+      </select>
+    </div>
+    <div id="connHeaderFields">
+      <input id="connHeaderName" type="text" placeholder="Header name (e.g. Authorization)" value="Authorization" />
+      <input id="connValuePrefix" type="text" placeholder="Prefix before the key, if any (e.g. 'Bearer ')" />
+    </div>
+    <div id="connOauthProviderFields" style="display:none;">
+      <select id="connOauthProviderSelect"></select>
+      <p class="tp-hint" style="margin:4px 0;">No providers registered yet? An admin adds one from the Admin page first.</p>
+    </div>
+    <input id="connUrl" type="text" placeholder="Search URL - use {query} for project name, {domain} for client domain, e.g. https://slack.com/api/search.messages?query={query}" />
+    <button type="button" class="tp-advanced-toggle" onclick="toggleConnAdvanced()" id="connAdvancedToggle">Field mapping (advanced) ▾</button>
+    <div class="tp-advanced" id="connAdvancedFields">
+      <p class="tp-hint" style="margin:4px 0;">Dotted JSON paths into each API response. "results_path" finds the list; the rest are relative to each item in it. A known-service preset above fills these in for you.</p>
+      <input id="connResultsPath" type="text" placeholder="results_path (e.g. items, or messages.matches)" />
+      <input id="connFieldId" type="text" placeholder="field_id, for dedup (e.g. id)" />
+      <input id="connFieldTitle" type="text" placeholder="field_title (e.g. summary or text)" />
+      <input id="connFieldContent" type="text" placeholder="field_content (e.g. description or text)" />
+      <input id="connFieldUrl" type="text" placeholder="field_url (e.g. htmlLink or permalink)" />
+      <input id="connFieldDate" type="text" placeholder="field_date (e.g. start.dateTime or ts)" />
+    </div>
+    <span class="agent-reads-label">Applies to:</span>
+    <div id="connProjectChecklist" class="project-checklist"></div>
+    <button class="primary" onclick="createConnector()">Create connector</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="applyExistingOverlay" onclick="if(event.target===this) closeApplyExistingPopup()">
+  <div class="project-new-form agent-form" id="applyExistingPopup" style="max-width:420px;">
+    <div class="modal-header">
+      <h4>Apply existing agents &amp; connectors?</h4>
+      <button class="modal-close" onclick="closeApplyExistingPopup()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;" id="applyExistingIntro">You already have some set up - want any of them running for <strong id="applyExistingProjectName"></strong> too?</p>
+    <div id="applyExistingChecklist" class="project-checklist" style="max-height:220px;"></div>
+    <div class="btn-row" style="margin-top:4px;">
+      <button class="danger" onclick="closeApplyExistingPopup()">Skip</button>
+      <button class="primary" onclick="applyExistingToNewProject()">Apply selected</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="settingsOverlay" onclick="if(event.target===this) toggleSettings()">
+  <div class="settings-panel" id="settingsPanel">
+    <div class="modal-header">
+      <h4>AI provider</h4>
+      <button class="modal-close" onclick="toggleSettings()">✕</button>
+    </div>
+    <select id="providerSelect" onchange="onProviderChange()">
+      <option value="anthropic">Anthropic (Claude)</option>
+      <option value="openai">OpenAI (ChatGPT)</option>
+      <option value="gemini">Google (Gemini)</option>
+      <option value="custom">Custom (OpenAI-compatible)</option>
+    </select>
+    <div id="customProviderFields" style="display:none;">
+      <input id="customProviderName" type="text" placeholder="Provider name (e.g. Groq)" />
+      <input id="customEndpointUrl" type="text" placeholder="Endpoint URL (OpenAI-compatible /chat/completions)" />
+    </div>
+    <input id="modelInput" type="text" placeholder="Model name" />
+    <div class="key-status" id="keyStatus">checking…</div>
+    <input type="password" id="apiKeyInput" placeholder="API key for this provider" />
+    <div class="btn-row">
+      <button class="primary" onclick="saveProviderSettings()">Save</button>
+      <button class="danger" onclick="clearApiKey()">Clear key</button>
+    </div>
+    <div class="provider-keys-summary" id="providerKeysSummary"></div>
+    <a class="logout-link" href="/auth/logout">Sign out</a>
+  </div>
+</div>
+
+<div class="modal-overlay" id="teamOverlay" onclick="if(event.target===this) toggleTeamPanel()">
+  <div class="team-panel-modal" id="teamPanel">
+    <div class="modal-header">
+      <h4>Team &amp; Keys</h4>
+      <button class="modal-close" onclick="toggleTeamPanel()">✕</button>
+    </div>
+    <div class="team-panel-inner">
+      <div class="tp-section">
+        <div class="tp-fill">
+          <h4>Team members</h4>
+          <p class="tp-hint">A Fireflies meeting is pulled in if any of these emails attended - whether or not they've signed into this console.</p>
+          <input id="teamEmailsInput" type="text" placeholder="e.g. ankit@themirailabs.com, krupali@themirailabs.com" />
+        </div>
+        <div class="btn-row">
+          <button class="primary" onclick="saveTeamEmails()">Save</button>
+        </div>
+      </div>
+      <div class="tp-section">
+        <div class="tp-fill">
+          <h4>Fireflies API key</h4>
+          <p class="tp-hint">Shared by the whole team for this project. From app.fireflies.ai → Integrations → Fireflies API.</p>
+          <div class="tp-status" id="firefliesStatus">checking…</div>
+          <input id="firefliesKeyInput" type="password" placeholder="Paste Fireflies API key" />
+        </div>
+        <div class="btn-row">
+          <button class="primary" onclick="saveFirefliesKey()">Save</button>
+          <button class="danger" onclick="clearFirefliesKey()">Clear</button>
+        </div>
+      </div>
+      <div class="tp-section">
+        <div class="tp-fill">
+          <h4>Google Account</h4>
+          <p class="tp-hint">Covers both Drive and Gmail in one connection - no folder-sharing step needed, since you're authorizing your own access. Connections made before Gmail support was added need to reconnect once to pick up the new scope.</p>
+          <div class="tp-status" id="driveOauthStatus">checking…</div>
+        </div>
+        <button class="drive-connect-btn" id="driveConnectBtn" onclick="connectDrive()">Connect Google Account</button>
+        <button class="danger" id="driveDisconnectBtn" style="display:none; width:100%;" onclick="disconnectDrive()">Disconnect</button>
+        <button class="tp-advanced-toggle" onclick="toggleDriveAdvanced()">Use a service account instead ▾</button>
+        <div class="tp-advanced" id="driveAdvanced">
+          <p class="tp-hint">The full service-account JSON file, pasted as-is. Remember to share the target Drive folder with its email address. Covers Drive only, not Gmail.</p>
+          <div class="tp-status" id="driveStatus">checking…</div>
+          <textarea id="driveJsonInput" placeholder='{"type": "service_account", ...}'></textarea>
+          <div class="btn-row">
+            <button class="primary" onclick="saveDriveCredentials()">Save</button>
+            <button class="danger" onclick="clearDriveCredentials()">Clear</button>
+          </div>
+        </div>
+      </div>
+      <div class="tp-section">
+        <div class="tp-fill">
+          <h4>Digest notifications</h4>
+          <p class="tp-hint">A Resend API key and an address to send project digests to - from resend.com, Overview → API Keys.</p>
+          <div class="tp-status" id="resendStatus">checking…</div>
+          <input id="notifyEmailInput" type="text" placeholder="Send digests to: name@example.com" />
+          <input id="resendKeyInput" type="password" placeholder="Paste Resend API key" />
+        </div>
+        <div class="btn-row">
+          <button class="primary" onclick="saveDigestSettings()">Save</button>
+          <button class="danger" onclick="clearResendKey()">Clear key</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <nav class="sidebar-nav">
+      <div class="sidebar-label">Workspace</div>
+      <a class="sidebar-item active" href="/">Dashboard</a>
+      <a class="sidebar-item" href="/projects">All Projects</a>
+      <a class="sidebar-item" href="/repository">Repository</a>
+      <a class="sidebar-item" id="sidebarAdminLink" href="/admin" style="display:none;">Admin</a>
+      <div class="sidebar-label">This Project</div>
+      <div class="sidebar-project-name" id="projectTitle">…</div>
+      <button class="sidebar-item" onclick="toggleTeamPanel()">Team &amp; Keys</button>
+      <div class="sidebar-label">Account</div>
+      <button class="sidebar-item" onclick="toggleSettings()">AI Provider</button>
+      <a class="sidebar-item" href="/auth/logout">Sign out</a>
+    </nav>
+  </aside>
+
+  <div class="content-area">
+    <div class="first-run" id="firstRun" style="display:none;">
+      <div class="first-run-card">
+        <div class="col-label" style="margin-bottom:6px;">Step 1</div>
+        <h2>Create your first project</h2>
+        <p>A name and, if you have one, the client's email domain - meetings and documents matching either get pulled in automatically.</p>
+        <input id="firstRunName" type="text" placeholder="Project name (e.g. SBAMI)" />
+        <input id="firstRunDomain" type="text" placeholder="Client email domain, optional (e.g. actionhospital.in)" />
+        <button class="primary" onclick="createFirstProject()">Create project</button>
+      </div>
+    </div>
+
+    <div class="all-projects-section">
+      <div class="col-label">All Projects</div>
+      <table class="projects-table">
+        <thead><tr><th>Project</th><th>Domain</th><th>Activity</th><th></th></tr></thead>
+        <tbody id="projectsTableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="this-project-label">This Project</div>
+    <div class="stepper" id="stepper"></div>
+
+    <main id="mainContent">
+  <div class="step-content">
+
+    <section class="step-panel" id="stepPanel-1" data-step="1">
+      <div class="col-label">Step 1 · Set up your project</div>
+      <div class="project-bar" id="projectBar">
+        <select id="projectSelect" onchange="onProjectSelect(this.value)"></select>
+        <button class="project-new-btn" onclick="toggleEditDomain()">Edit domain</button>
+        <div class="project-new-form" id="editDomainForm">
+          <input id="editDomainInput" type="text" placeholder="Client email domain, e.g. actionhospital.in" />
+          <button class="primary" onclick="saveDomain()">Save</button>
+        </div>
+      </div>
+      <div class="keywords-line" id="keywordsLine"></div>
+      <button class="step-next-btn" onclick="goToStep(2)">Next: Extract &amp; store →</button>
+    </section>
+
+    <section class="step-panel" id="stepPanel-2" data-step="2">
+      <div class="col-label">Step 2 · Extract &amp; store</div>
+      <p class="step-hint">Pull in the meetings and documents that match this project, then have Claude read them.</p>
+      <div id="modules" class="modules-grid"></div>
+      <button class="step-next-btn" onclick="goToStep(3)">Next: Ask a question / Search →</button>
+    </section>
+
+    <section class="step-panel" id="stepPanel-3" data-step="3">
+      <div class="col-label">Step 3 · Ask a question / Search the database</div>
+      <p class="step-hint">Get a synthesized answer with sources, or do a quick keyword lookup - whichever fits what you need.</p>
+      <div class="query-bar">
+        <input id="askInput" type="text" placeholder="e.g. What did we agree on billing with SBAMI?" />
+        <button onclick="runAsk()">ASK</button>
+      </div>
+      <div id="askResult"></div>
+
+      <div class="col-label" style="margin-top:28px;">Quick search</div>
+      <div class="query-bar">
+        <input id="queryInput" type="text" placeholder="e.g. UHID, HIS/LIS, payment" />
+        <button onclick="runQuery()">SEARCH</button>
+      </div>
+      <div id="results"></div>
+    </section>
+
+  </div>
+
+  <aside class="feed-column" id="feedColumn">
+    <button class="feed-column-toggle" id="feedColumnToggle" onclick="toggleFeedColumn()" title="Expand event feed">‹</button>
+    <div class="feed-column-content" id="feedColumnContent">
+      <div class="col-label">Event feed</div>
+      <div id="eventFeed"></div>
+    </div>
+  </aside>
+</main>
+  </div>
+</div>
+
+<script>
+async function apiFetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) {
+    window.location.href = '/login';
+    throw new Error('unauthenticated');
+  }
+  return res;
+}
+
+let currentRole = null;
+let currentProjectId = null;
+let allProjects = [];
+let pendingApplyProjectId = null;
+
+// Data-driven on purpose: adding a future step/agent means adding one
+// entry here plus one <section class="step-panel" data-step="N"> in
+// the HTML - the stepper's rendering, navigation, and done-indicators
+// all work off this array, nothing else needs to change.
+const STEPS = [
+  { id: 1, label: 'Set up project' },
+  { id: 2, label: 'Extract & store' },
+  { id: 3, label: 'Ask / Search' },
+];
+let currentStep = 1;
+let stepInitialized = false;
+
+function pickDefaultStep(project) {
+  if (!project) return 1;
+  const hasData = (project.meetings_count > 0 || project.documents_count > 0);
+  return hasData ? 3 : 2;
+}
+
+function goToStep(n) {
+  currentStep = n;
+  document.querySelectorAll('.step-panel').forEach(p => {
+    p.classList.toggle('active', parseInt(p.dataset.step, 10) === n);
+  });
+  renderStepper();
+}
+
+function renderStepper() {
+  const stepper = document.getElementById('stepper');
+  const active = allProjects.find(p => p.id === currentProjectId);
+  const done = {
+    1: !!currentProjectId,
+    2: active ? (active.meetings_count > 0 || active.documents_count > 0) : false,
+    3: false,
+  };
+  stepper.innerHTML = STEPS.map(s => `
+    <button class="step-tab ${currentStep === s.id ? 'active' : ''} ${done[s.id] ? 'done' : ''}" onclick="goToStep(${s.id})">
+      <span class="step-num">${done[s.id] && currentStep !== s.id ? '✓' : s.id}</span>
+      <span class="step-label">${s.label}</span>
+    </button>
+  `).join('');
+}
+
+async function loadProjects() {
+  const [listRes, currentRes] = await Promise.all([
+    apiFetch('/api/projects'),
+    apiFetch('/api/projects/current'),
+  ]);
+  const projects = await listRes.json();
+  const current = await currentRes.json();
+  allProjects = projects;
+  currentProjectId = current ? current.id : null;
+  renderProjectsTable();
+
+  if (!projects.length) {
+    document.getElementById('stepper').style.display = 'none';
+    document.getElementById('mainContent').style.display = 'none';
+    document.getElementById('firstRun').style.display = 'flex';
+    document.getElementById('projectTitle').textContent = 'No project';
+    return false;
+  }
+  document.getElementById('stepper').style.display = 'flex';
+  document.getElementById('mainContent').style.display = 'grid';
+  document.getElementById('firstRun').style.display = 'none';
+
+  const select = document.getElementById('projectSelect');
+  select.innerHTML = projects.map(p =>
+    `<option value="${p.id}" ${p.id === currentProjectId ? 'selected' : ''}>${p.name}</option>`
+  ).join('');
+
+  if (!currentProjectId) {
+    // Nothing selected yet in this session - default to the first project.
+    currentProjectId = projects[0].id;
+    await apiFetch(`/api/projects/${currentProjectId}/select`, { method: 'POST' });
+    select.value = currentProjectId;
+  }
+  const activeProject = projects.find(p => p.id === currentProjectId);
+  document.getElementById('projectTitle').textContent = activeProject ? activeProject.name : 'No project';
+  renderKeywordsLine(activeProject);
+  renderProjectsTable();
+
+  if (!stepInitialized) {
+    stepInitialized = true;
+    goToStep(pickDefaultStep(activeProject));
+  } else {
+    renderStepper();
+  }
+  return true;
+}
+
+function renderProjectsTable() {
+  const body = document.getElementById('projectsTableBody');
+  if (!allProjects.length) {
+    body.innerHTML = '<tr><td colspan="4" class="proj-domain">No projects yet - use "+ New Project" above to create one.</td></tr>';
+    return;
+  }
+  body.innerHTML = allProjects.map(p => `
+    <tr class="${p.id === currentProjectId ? 'current-row' : ''}">
+      <td class="proj-name">${p.name}</td>
+      <td class="proj-domain">${p.domain || '—'}</td>
+      <td class="proj-counts">${p.meetings_count + p.documents_count} synced · ${p.decisions_count} decisions</td>
+      <td>${p.id === currentProjectId
+        ? '<span class="current-pill">current</span>'
+        : `<button class="open-btn" onclick="onProjectSelect(${p.id})">Open →</button>`}</td>
+    </tr>
+  `).join('');
+}
+
+function renderKeywordsLine(project) {
+  const el = document.getElementById('keywordsLine');
+  if (!project) { el.textContent = ''; return; }
+  el.className = 'keywords-line';
+  const nameRule = `title/filename contains "${project.name}"`;
+  if (project.domain) {
+    el.innerHTML = `<span class="kw-label">Matching:</span> <span class="kw-value">${nameRule}, or anyone @${project.domain}</span>`;
+  } else {
+    el.innerHTML = `<span class="kw-label">Matching:</span> <span class="kw-value">${nameRule} only</span> <span class="kw-hint">- add a client domain in "Edit domain" to also match by participant/sharing</span>`;
+  }
+}
+
+function toggleTeamPanel() {
+  const overlay = document.getElementById('teamOverlay');
+  const opening = !overlay.classList.contains('open');
+  document.getElementById('editDomainForm').classList.remove('open');
+  document.getElementById('projectNewForm').classList.remove('open');
+  overlay.classList.toggle('open', opening);
+  if (opening) {
+    const active = allProjects.find(p => p.id === currentProjectId);
+    document.getElementById('teamEmailsInput').value = (active && active.team_emails) || '';
+    document.getElementById('notifyEmailInput').value = (active && active.notify_email) || '';
+    renderCredStatus('firefliesStatus', active && active.has_fireflies_key);
+    renderCredStatus('driveStatus', active && active.has_drive_credentials);
+    renderCredStatus('resendStatus', active && active.has_resend_key);
+    renderDriveOauthStatus(active);
+  }
+}
+
+function renderDriveOauthStatus(active) {
+  const connected = active && active.has_drive_oauth;
+  const statusEl = document.getElementById('driveOauthStatus');
+  const connectBtn = document.getElementById('driveConnectBtn');
+  const disconnectBtn = document.getElementById('driveDisconnectBtn');
+  if (connected) {
+    statusEl.className = 'tp-status set';
+    statusEl.textContent = `Connected as ${active.drive_oauth_email}`;
+    connectBtn.style.display = 'none';
+    disconnectBtn.style.display = 'block';
+  } else {
+    statusEl.className = 'tp-status unset';
+    statusEl.textContent = 'Not connected - running falls back to demo mode';
+    connectBtn.style.display = 'block';
+    disconnectBtn.style.display = 'none';
+  }
+}
+
+function connectDrive() {
+  // Resolved fresh at click time, not read from whatever it was when the
+  // panel happened to open - avoids ever building a link with a stale or
+  // not-yet-loaded project id.
+  if (!currentProjectId) {
+    alert('Select or create a project first.');
+    return;
+  }
+  window.location.href = `/drive/connect/${currentProjectId}`;
+}
+
+function toggleDriveAdvanced() {
+  document.getElementById('driveAdvanced').classList.toggle('open');
+}
+
+async function disconnectDrive() {
+  if (!currentProjectId) return;
+  await apiFetch(`/api/projects/${currentProjectId}/drive-disconnect`, { method: 'POST' });
+  await loadProjects();
+  const active = allProjects.find(p => p.id === currentProjectId);
+  renderDriveOauthStatus(active);
+}
+
+function renderCredStatus(elId, isSet) {
+  const el = document.getElementById(elId);
+  el.className = 'tp-status ' + (isSet ? 'set' : 'unset');
+  el.textContent = isSet ? 'Key set for this team' : 'Not set - running falls back to demo mode';
+}
+
+async function saveTeamEmails() {
+  if (!currentProjectId) return;
+  const team_emails = document.getElementById('teamEmailsInput').value.trim();
+  await apiFetch(`/api/projects/${currentProjectId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ team_emails }),
+  });
+  await loadProjects();
+}
+
+async function saveFirefliesKey() {
+  if (!currentProjectId) return;
+  const value = document.getElementById('firefliesKeyInput').value.trim();
+  if (!value) return;
+  const res = await apiFetch(`/api/projects/${currentProjectId}/fireflies-key`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (res.ok) {
+    document.getElementById('firefliesKeyInput').value = '';
+    renderCredStatus('firefliesStatus', true);
+    await loadProjects();
+  } else {
+    const body = await res.json();
+    alert(body.detail || 'Could not save key');
+  }
+}
+
+async function clearFirefliesKey() {
+  if (!currentProjectId) return;
+  await apiFetch(`/api/projects/${currentProjectId}/fireflies-key`, { method: 'DELETE' });
+  renderCredStatus('firefliesStatus', false);
+  await loadProjects();
+}
+
+async function saveDigestSettings() {
+  if (!currentProjectId) return;
+  const notify_email = document.getElementById('notifyEmailInput').value.trim();
+  const resendKey = document.getElementById('resendKeyInput').value.trim();
+  await apiFetch(`/api/projects/${currentProjectId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notify_email }),
+  });
+  if (resendKey) {
+    const res = await apiFetch(`/api/projects/${currentProjectId}/resend-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: resendKey }),
+    });
+    if (res.ok) {
+      document.getElementById('resendKeyInput').value = '';
+      renderCredStatus('resendStatus', true);
+    }
+  }
+  await loadProjects();
+}
+
+async function clearResendKey() {
+  if (!currentProjectId) return;
+  await apiFetch(`/api/projects/${currentProjectId}/resend-key`, { method: 'DELETE' });
+  renderCredStatus('resendStatus', false);
+  await loadProjects();
+}
+
+async function saveDriveCredentials() {
+  if (!currentProjectId) return;
+  const value = document.getElementById('driveJsonInput').value.trim();
+  if (!value) return;
+  const res = await apiFetch(`/api/projects/${currentProjectId}/drive-credentials`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (res.ok) {
+    document.getElementById('driveJsonInput').value = '';
+    renderCredStatus('driveStatus', true);
+    await loadProjects();
+  } else {
+    const body = await res.json();
+    alert(body.detail || 'Could not save credentials');
+  }
+}
+
+async function clearDriveCredentials() {
+  if (!currentProjectId) return;
+  await apiFetch(`/api/projects/${currentProjectId}/drive-credentials`, { method: 'DELETE' });
+  renderCredStatus('driveStatus', false);
+  await loadProjects();
+}
+
+function toggleEditDomain() {
+  const form = document.getElementById('editDomainForm');
+  const opening = !form.classList.contains('open');
+  document.getElementById('projectNewForm').classList.remove('open');
+  document.getElementById('teamOverlay').classList.remove('open');
+  form.classList.toggle('open', opening);
+  if (opening) {
+    const active = allProjects.find(p => p.id === currentProjectId);
+    document.getElementById('editDomainInput').value = (active && active.domain) || '';
+  }
+}
+
+async function saveDomain() {
+  if (!currentProjectId) return;
+  const domain = document.getElementById('editDomainInput').value.trim();
+  await apiFetch(`/api/projects/${currentProjectId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain }),
+  });
+  document.getElementById('editDomainForm').classList.remove('open');
+  await loadProjects();
+}
+
+async function onProjectSelect(id) {
+  if (!id) return;
+  await apiFetch(`/api/projects/${id}/select`, { method: 'POST' });
+  currentProjectId = parseInt(id, 10);
+  document.getElementById('editDomainForm').classList.remove('open');
+  document.getElementById('projectNewForm').classList.remove('open');
+  document.getElementById('teamOverlay').classList.remove('open');
+  await loadProjects();
+  goToStep(pickDefaultStep(allProjects.find(p => p.id === currentProjectId)));
+  await refreshAll();
+}
+
+function toggleNewProject() {
+  document.getElementById('editDomainForm').classList.remove('open');
+  document.getElementById('teamOverlay').classList.remove('open');
+  document.getElementById('projectNewForm').classList.toggle('open');
+}
+
+async function submitNewProject(name, domain) {
+  if (!name) return null;
+  const res = await apiFetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, domain }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(body.detail || 'Could not create project');
+    return null;
+  }
+  const newProject = await res.json();
+  await loadProjects();
+  goToStep(2);
+  await refreshAll();
+  await maybeOfferExistingToNewProject(newProject.id, newProject.name);
+  return res;
+}
+
+async function maybeOfferExistingToNewProject(newProjectId, newProjectName) {
+  const [engRes, connRes] = await Promise.all([apiFetch('/api/engines'), apiFetch('/api/rest-connectors')]);
+  const engines = await engRes.json();
+  const connectors = await connRes.json();
+  if (!engines.length && !connectors.length) return;   // nothing to offer
+
+  pendingApplyProjectId = newProjectId;
+  document.getElementById('applyExistingProjectName').textContent = newProjectName;
+  const checklist = document.getElementById('applyExistingChecklist');
+  checklist.innerHTML = [
+    ...engines.map(e => `<label><input type="checkbox" class="apply-check" data-kind="engine" data-id="${e.id}" /> ${e.display_name} <span style="color:var(--text-muted)">· agent</span></label>`),
+    ...connectors.map(c => `<label><input type="checkbox" class="apply-check" data-kind="connector" data-id="${c.id}" /> ${c.display_name} <span style="color:var(--text-muted)">· connector</span></label>`),
+  ].join('');
+  document.getElementById('applyExistingOverlay').classList.add('open');
+}
+
+function closeApplyExistingPopup() {
+  document.getElementById('applyExistingOverlay').classList.remove('open');
+  pendingApplyProjectId = null;
+}
+
+async function applyExistingToNewProject() {
+  const checks = Array.from(document.querySelectorAll('#applyExistingChecklist .apply-check:checked'));
+  await Promise.all(checks.map(chk => {
+    const kind = chk.dataset.kind;
+    const id = chk.dataset.id;
+    const url = kind === 'engine'
+      ? `/api/engines/${id}/projects/${pendingApplyProjectId}`
+      : `/api/rest-connectors/${id}/projects/${pendingApplyProjectId}`;
+    return apiFetch(url, { method: 'POST' });
+  }));
+  closeApplyExistingPopup();
+  await fetchModules();
+}
+
+async function createProject() {
+  const name = document.getElementById('newProjectName').value.trim();
+  const domain = document.getElementById('newProjectDomain').value.trim();
+  const ok = await submitNewProject(name, domain);
+  if (ok) {
+    document.getElementById('newProjectName').value = '';
+    document.getElementById('newProjectDomain').value = '';
+    document.getElementById('projectNewForm').classList.remove('open');
+  }
+}
+
+async function createFirstProject() {
+  const name = document.getElementById('firstRunName').value.trim();
+  const domain = document.getElementById('firstRunDomain').value.trim();
+  await submitNewProject(name, domain);
+}
+
+async function refreshAll() {
+  await fetchModules();
+  await fetchEvents();
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('askResult').innerHTML = '';
+}
+
+let meCache = null;
+const SUGGESTED_MODELS = {
+  anthropic: 'claude-sonnet-4-6',
+  openai: 'gpt-5.5',
+  gemini: 'gemini-3.5-flash',
+  custom: '',
+};
+
+async function loadMe() {
+  const res = await apiFetch('/api/me');
+  const me = await res.json();
+  meCache = me;
+  document.getElementById('userEmail').textContent = me.email;
+  document.getElementById('roleTag').textContent = me.role;
+  if (me.picture) {
+    const img = document.getElementById('userPic');
+    img.src = me.picture;
+    img.style.display = 'block';
+  }
+  if (me.role === 'admin') {
+    document.getElementById('sidebarAdminLink').style.display = 'block';
+  }
+  currentRole = me.role;
+  renderProviderSettings(me);
+}
+
+function renderProviderSettings(me) {
+  document.getElementById('providerSelect').value = me.preferred_provider;
+  document.getElementById('modelInput').value = me.preferred_model || '';
+  document.getElementById('customProviderName').value = me.custom_provider_name || '';
+  document.getElementById('customEndpointUrl').value = me.custom_endpoint_url || '';
+  document.getElementById('customProviderFields').style.display = me.preferred_provider === 'custom' ? 'block' : 'none';
+  renderKeyStatusFor(me.preferred_provider);
+
+  const labels = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini', custom: me.custom_provider_name || 'Custom' };
+  document.getElementById('providerKeysSummary').innerHTML = Object.keys(me.has_key).map(p =>
+    `<span class="${me.has_key[p] ? 'yes' : ''}">${labels[p] || p}: ${me.has_key[p] ? '✓' : '—'}</span>`
+  ).join(' &nbsp; ');
+}
+
+function renderKeyStatusFor(provider) {
+  const hasKey = meCache && meCache.has_key[provider];
+  const el = document.getElementById('keyStatus');
+  el.className = 'key-status ' + (hasKey ? 'set' : 'unset');
+  el.textContent = hasKey ? 'Key set for this provider - live runs use it' : 'No key set for this provider - runs in demo mode';
+}
+
+function onProviderChange() {
+  const provider = document.getElementById('providerSelect').value;
+  document.getElementById('customProviderFields').style.display = provider === 'custom' ? 'block' : 'none';
+  const modelInput = document.getElementById('modelInput');
+  // Only auto-fill if empty or still showing another provider's suggested
+  // default - never clobber a model name someone actually typed in.
+  const wasSuggested = Object.values(SUGGESTED_MODELS).includes(modelInput.value);
+  if (!modelInput.value || wasSuggested) {
+    modelInput.value = SUGGESTED_MODELS[provider] || '';
+  }
+  renderKeyStatusFor(provider);
+}
+
+function toggleSettings() {
+  document.getElementById('settingsOverlay').classList.toggle('open');
+}
+
+async function saveProviderSettings() {
+  const provider = document.getElementById('providerSelect').value;
+  const model = document.getElementById('modelInput').value.trim();
+  const custom_provider_name = document.getElementById('customProviderName').value.trim();
+  const custom_endpoint_url = document.getElementById('customEndpointUrl').value.trim();
+  const keyInput = document.getElementById('apiKeyInput');
+  const key = keyInput.value.trim();
+
+  const res = await apiFetch('/api/me/provider', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, model, custom_provider_name, custom_endpoint_url }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(body.detail || 'Could not save provider settings');
+    return;
+  }
+  if (key) {
+    const keyRes = await apiFetch('/api/me/api-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: key, provider }),
+    });
+    if (keyRes.ok) keyInput.value = '';
+  }
+  await loadMe();
+}
+
+async function clearApiKey() {
+  const provider = document.getElementById('providerSelect').value;
+  await apiFetch(`/api/me/api-key?provider=${provider}`, { method: 'DELETE' });
+  await loadMe();
+}
+
+async function fetchModules() {
+  const res = await apiFetch('/api/modules');
+  const modules = await res.json();
+  const el = document.getElementById('modules');
+  el.innerHTML = modules.map(m => `
+    <div class="module-card" id="card-${m.module_id}">
+      <div class="row">
+        <span class="module-name">${m.display_name}${m.custom ? ' <span class="custom-badge">custom</span>' : ''}</span>
+        <span class="status-dot ${m.last_status || ''}" id="dot-${m.module_id}"></span>
+      </div>
+      <div class="card-fill">
+        <div class="module-desc">${m.description}</div>
+        <div class="rw-tags">
+          ${m.reads.map(r => `<span class="tag">reads ${r}</span>`).join('')}
+          ${m.writes.map(w => `<span class="tag">writes ${w}</span>`).join('')}
+        </div>
+        <div class="module-meta">${m.last_run ? 'last run ' + timeAgo(m.last_run) : 'never run'}</div>
+      </div>
+      ${m.needs_credential && m.oauth_provider_slug ? `
+        <a class="drive-connect-btn" href="/oauth/${m.oauth_provider_slug}/connect/${currentProjectId}">Connect ${m.oauth_provider_name}</a>
+      ` : ''}
+      ${m.needs_credential && !m.oauth_provider_slug ? `
+        <div class="conn-cred-row">
+          <input type="password" id="connCred-${m.connector_id}" placeholder="Paste API key to run live" />
+          <button class="primary" onclick="saveConnectorCredential(${m.connector_id})">Save</button>
+        </div>
+      ` : ''}
+      ${currentRole === 'viewer'
+        ? '<div class="read-only-note">read-only access</div>'
+        : `<button class="run-btn" id="btn-${m.module_id}" onclick="runModule('${m.module_id}')">RUN</button>`}
+      ${m.engine_id && currentRole !== 'viewer' ? `<button class="agent-delete-btn" onclick="deleteAgent(${m.engine_id})">Delete agent</button>` : ''}
+      ${m.connector_id && currentRole !== 'viewer' ? `<button class="agent-delete-btn" onclick="deleteConnector(${m.connector_id})">Delete connector</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function renderProjectChecklist(containerId) {
+  const container = document.getElementById(containerId);
+  if (!allProjects.length) {
+    container.innerHTML = '<p class="empty-note">No projects yet - this will be offered automatically once you create your first one.</p>';
+    return;
+  }
+  container.innerHTML = allProjects.map(p => `
+    <label><input type="checkbox" class="proj-check" value="${p.id}" ${p.id === currentProjectId ? 'checked' : ''} /> ${p.name}</label>
+  `).join('');
+}
+
+function toggleNewAgent() {
+  const overlay = document.getElementById('newAgentOverlay');
+  const opening = !overlay.classList.contains('open');
+  overlay.classList.toggle('open', opening);
+  if (opening) renderProjectChecklist('agentProjectChecklist');
+}
+
+async function createAgent() {
+  const display_name = document.getElementById('agentName').value.trim();
+  const description = document.getElementById('agentDescription').value.trim();
+  const prompt_template = document.getElementById('agentPrompt').value.trim();
+  const reads = Array.from(document.querySelectorAll('.agent-reads input:checked')).map(i => i.value).join(', ');
+  const project_ids = Array.from(document.querySelectorAll('#agentProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+  if (!display_name || !prompt_template || !reads) {
+    alert('Name, at least one "reads" type, and a prompt are all required.');
+    return;
+  }
+  const res = await apiFetch('/api/engines', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display_name, description, reads, prompt_template, project_ids }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(body.detail || 'Could not create agent');
+    return;
+  }
+  document.getElementById('agentName').value = '';
+  document.getElementById('agentDescription').value = '';
+  document.getElementById('agentPrompt').value = '';
+  document.getElementById('newAgentOverlay').classList.remove('open');
+  await fetchModules();
+}
+
+async function deleteAgent(engineId) {
+  if (!confirm('Delete this agent? Its past outputs stay in the Repository, but it will stop showing up here.')) return;
+  await apiFetch(`/api/engines/${engineId}`, { method: 'DELETE' });
+  await fetchModules();
+}
+
+async function toggleNewConnector() {
+  const overlay = document.getElementById('newConnectorOverlay');
+  const opening = !overlay.classList.contains('open');
+  overlay.classList.toggle('open', opening);
+  if (opening) {
+    renderProjectChecklist('connProjectChecklist');
+    const res = await apiFetch('/api/oauth-providers');
+    const providers = await res.json();
+    const select = document.getElementById('connOauthProviderSelect');
+    select.innerHTML = providers.length
+      ? providers.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
+      : '<option value="">No providers registered yet</option>';
+  }
+}
+
+function toggleConnAuthFields() {
+  const style = document.querySelector('input[name="connAuth"]:checked').value;
+  document.getElementById('connHeaderFields').style.display = style === 'header' ? 'flex' : 'none';
+  document.getElementById('connOauthProviderFields').style.display = style === 'oauth_provider' ? 'block' : 'none';
+  document.getElementById('connGooglePresetFields').style.display = style === 'google_oauth' ? 'block' : 'none';
+}
+
+const GOOGLE_CONNECTOR_PRESETS = {
+  calendar: {
+    name: 'Google Calendar',
+    description: 'Pulls calendar events matching the project name, via the connected Google account.',
+    url: 'https://www.googleapis.com/calendar/v3/calendars/primary/events?q={query}',
+    results_path: 'items',
+    field_id: 'id',
+    field_title: 'summary',
+    field_content: 'description',
+    field_url: 'htmlLink',
+    field_date: 'start.dateTime',
+  },
+};
+
+function applyGooglePreset() {
+  const key = document.getElementById('connGooglePreset').value;
+  if (!key) return;
+  const preset = GOOGLE_CONNECTOR_PRESETS[key];
+  const nameInput = document.getElementById('connName');
+  const descInput = document.getElementById('connDescription');
+  if (!nameInput.value.trim()) nameInput.value = preset.name;
+  if (!descInput.value.trim()) descInput.value = preset.description;
+  document.getElementById('connUrl').value = preset.url;
+  document.getElementById('connResultsPath').value = preset.results_path;
+  document.getElementById('connFieldId').value = preset.field_id;
+  document.getElementById('connFieldTitle').value = preset.field_title;
+  document.getElementById('connFieldContent').value = preset.field_content;
+  document.getElementById('connFieldUrl').value = preset.field_url;
+  document.getElementById('connFieldDate').value = preset.field_date;
+  // Expand the advanced section so someone curious can see exactly what
+  // got filled in, without ever having had to type it themselves.
+  document.getElementById('connAdvancedFields').classList.add('open');
+  document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▴';
+}
+
+function toggleConnAdvanced() {
+  const el = document.getElementById('connAdvancedFields');
+  const opening = !el.classList.contains('open');
+  el.classList.toggle('open', opening);
+  document.getElementById('connAdvancedToggle').textContent = `Field mapping (advanced) ${opening ? '▴' : '▾'}`;
+}
+
+async function createConnector() {
+  const display_name = document.getElementById('connName').value.trim();
+  const description = document.getElementById('connDescription').value.trim();
+  const search_url_template = document.getElementById('connUrl').value.trim();
+  const auth_style = document.querySelector('input[name="connAuth"]:checked').value;
+  const auth_header_name = document.getElementById('connHeaderName').value.trim();
+  const auth_value_prefix = document.getElementById('connValuePrefix').value;
+  const oauth_provider_id = auth_style === 'oauth_provider'
+    ? parseInt(document.getElementById('connOauthProviderSelect').value, 10) || null
+    : null;
+  const results_path = document.getElementById('connResultsPath').value.trim();
+  const field_id = document.getElementById('connFieldId').value.trim();
+  const field_title = document.getElementById('connFieldTitle').value.trim();
+  const field_content = document.getElementById('connFieldContent').value.trim();
+  const field_url = document.getElementById('connFieldUrl').value.trim();
+  const field_date = document.getElementById('connFieldDate').value.trim();
+  const project_ids = Array.from(document.querySelectorAll('#connProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+
+  if (!display_name || !search_url_template || !results_path) {
+    alert('Name, search URL, and results_path are all required.');
+    return;
+  }
+  if (auth_style === 'oauth_provider' && !oauth_provider_id) {
+    alert('Pick an OAuth provider - if none are listed, an admin needs to register one first.');
+    return;
+  }
+  const res = await apiFetch('/api/rest-connectors', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      display_name, description, search_url_template, auth_style, auth_header_name, auth_value_prefix,
+      oauth_provider_id, results_path, field_id, field_title, field_content, field_url, field_date, project_ids,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(body.detail || 'Could not create connector');
+    return;
+  }
+  ['connName', 'connDescription', 'connUrl', 'connResultsPath', 'connFieldId', 'connFieldTitle', 'connFieldContent', 'connFieldUrl', 'connFieldDate']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('newConnectorOverlay').classList.remove('open');
+  await fetchModules();
+}
+
+async function deleteConnector(connectorId) {
+  if (!confirm('Delete this connector? Records it already synced stay in the Repository, but it will stop showing up here.')) return;
+  await apiFetch(`/api/rest-connectors/${connectorId}`, { method: 'DELETE' });
+  await fetchModules();
+}
+
+async function saveConnectorCredential(connectorId) {
+  const input = document.getElementById('connCred-' + connectorId);
+  const value = input.value.trim();
+  if (!value) return;
+  const res = await apiFetch(`/api/rest-connectors/${connectorId}/credential`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (res.ok) {
+    await fetchModules();
+  } else {
+    const body = await res.json();
+    alert(body.detail || 'Could not save credential');
+  }
+}
+
+async function runModule(id) {
+  const btn = document.getElementById('btn-' + id);
+  const dot = document.getElementById('dot-' + id);
+  btn.disabled = true; btn.textContent = 'RUNNING…';
+  dot.className = 'status-dot running';
+  try {
+    const res = await apiFetch('/api/run/' + id, { method: 'POST' });
+    const body = await res.json();
+    if (body.error) {
+      showToast('error', `${id}: ${body.error}`);
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = 'RUN';
+    fetchModules();
+    await fetchEvents();
+    const latest = lastEvents.find(e => e.module_id === id);
+    if (latest && latest.status !== 'error') {
+      showToast(latest.status, `${id}: ${shortLabel(latest)}`);
+    }
+  }
+}
+
+let lastEvents = [];
+
+function toggleFeedColumn() {
+  const expanded = document.getElementById('mainContent').classList.toggle('feed-expanded');
+  const btn = document.getElementById('feedColumnToggle');
+  btn.title = expanded ? 'Collapse event feed' : 'Expand event feed';
+}
+
+function shortLabel(e) {
+  if (e.status === 'error') return 'Failed - see event feed for details';
+  if (e.status === 'warning') return 'Completed with a warning - see event feed for details';
+  const m = e.message.match(/^(Synced \d+ new \w+\(s\)|Summarized \d+ record\(s\)[^(]*|Demo mode - generated \d+ sample \w+\(s\))/);
+  return m ? m[1] : 'Completed';
+}
+
+async function fetchEvents() {
+  const res = await apiFetch('/api/events');
+  lastEvents = await res.json();
+  renderEvents();
+}
+
+function renderEvents() {
+  const el = document.getElementById('eventFeed');
+  if (!lastEvents.length) {
+    el.innerHTML = '<div class="empty-note">No runs yet. Run a module to populate the feed.</div>';
+    return;
+  }
+  el.innerHTML = lastEvents.map(e => `
+    <div class="feed-item">
+      <span class="feed-dot ${e.status}"></span>
+      <span class="feed-time">${timeAgo(e.created_at)}</span>
+      <span class="feed-module">${e.module_id}</span>
+      <span class="feed-msg ${e.status}">${e.message}</span>
+    </div>
+  `).join('');
+}
+
+function showToast(status, text) {
+  const stack = document.getElementById('toastStack');
+  const toast = document.createElement('div');
+  toast.className = `toast ${status}`;
+  toast.textContent = text;
+  stack.appendChild(toast);
+  setTimeout(() => toast.remove(), 4500);
+}
+
+async function runAsk() {
+  const q = document.getElementById('askInput').value.trim();
+  if (!q) return;
+  const el = document.getElementById('askResult');
+  el.innerHTML = '<div class="answer-loading">Synthesizing an answer…</div>';
+  const res = await apiFetch('/api/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: q }),
+  });
+  const data = await res.json();
+  const sourcesHtml = (data.sources || []).map(s =>
+    s.source_url
+      ? `<a class="answer-source-pill" href="${s.source_url}" target="_blank" rel="noopener">${s.ref} · ${s.title}</a>`
+      : `<span class="answer-source-pill">${s.ref} · ${s.title}</span>`
+  ).join('');
+  el.innerHTML = `
+    <div class="answer-card">
+      <div>${data.answer}</div>
+      ${sourcesHtml ? `<div class="answer-sources">${sourcesHtml}</div>` : ''}
+    </div>
+  `;
+}
+
+async function runQuery() {
+  const q = document.getElementById('queryInput').value.trim();
+  if (!q) return;
+  const res = await apiFetch('/api/query?q=' + encodeURIComponent(q));
+  const data = await res.json();
+  const el = document.getElementById('results');
+  const groups = [
+    ['meetings', 'Meetings', m => `<div class="rc-title">${m.title || '(untitled)'}</div><div class="rc-sub">${m.source} · ${m.occurred_at ? new Date(m.occurred_at).toLocaleDateString() : ''}</div>${m.synthesized_summary ? `<div class="rc-summary">${m.synthesized_summary}</div>` : ''}${m.source_url ? `<a class="rc-source" href="${m.source_url}" target="_blank" rel="noopener">View source ↗</a>` : ''}`],
+    ['documents', 'Documents', d => `<div class="rc-title">${d.title || '(untitled)'}</div><div class="rc-sub">${d.source}</div>${d.synthesized_summary ? `<div class="rc-summary">${d.synthesized_summary}</div>` : ''}${d.source_url ? `<a class="rc-source" href="${d.source_url}" target="_blank" rel="noopener">View source ↗</a>` : ''}`],
+    ['decisions', 'Decisions', d => `<div class="rc-title">${d.description}</div><div class="rc-sub">from ${d.source_type} #${d.source_id}</div>`],
+    ['action_items', 'Action items', a => `<div class="rc-title">${a.description}</div><div class="rc-sub">${a.owner || 'unassigned'}${a.due_date ? ' · due ' + a.due_date : ''}</div>`],
+  ];
+  let html = '';
+  let total = 0;
+  for (const [key, label, render] of groups) {
+    const items = data[key] || [];
+    if (!items.length) continue;
+    total += items.length;
+    html += `<div class="results-group"><h4>${label} (${items.length})</h4>` +
+      items.map(i => `<div class="result-card">${render(i)}</div>`).join('') + `</div>`;
+  }
+  el.innerHTML = total ? html : '<div class="empty-note">No matches. Try running the connectors and extraction engine first.</div>';
+}
+
+function timeAgo(iso) {
+  const then = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'));
+  const diff = Math.max(0, (Date.now() - then.getTime()) / 1000);
+  if (diff < 60) return Math.floor(diff) + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+(async function start() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('error') === 'drive_connect_expired') {
+    alert('That Drive connection attempt took too long or your session expired - open Team & keys and try Connect Google Drive again.');
+    window.history.replaceState({}, '', '/');
+  }
+  await loadMe();
+  await loadProjects();
+  fetchModules();
+  fetchEvents();
+  setInterval(fetchEvents, 5000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Client Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --border: #e6e3dd;
+    --text: #1c1b19; --text-muted: #75716a; --accent: #b5651d;
+    --shadow-sm: 0 1px 2px rgba(28,27,25,0.05), 0 1px 3px rgba(28,27,25,0.06);
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .title { font-family: var(--mono); letter-spacing: 0.04em; font-size: 14px; color: var(--text); font-weight: 600; }
+  .title strong { color: var(--text); }
+  a.logout { font-family: var(--mono); font-size: 11px; color: var(--text-muted); text-decoration: none; }
+  a.logout:hover { color: var(--accent); }
+
+  main { max-width: 720px; margin: 0 auto; padding: 32px 28px; }
+  .col-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+    color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px;
+  }
+  .brief-card {
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 20px; margin-bottom: 32px; line-height: 1.65; font-size: 13.5px;
+    white-space: pre-wrap; box-shadow: var(--shadow-sm);
+  }
+  .brief-date { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-bottom: 14px; }
+  .decision-item {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; margin-bottom: 8px; font-size: 13px; line-height: 1.5; box-shadow: var(--shadow-sm);
+  }
+  .empty-note { color: var(--text-muted); font-size: 13px; padding: 30px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title"><span id="projectName">…</span> <span style="color:var(--text-muted)">·</span> <strong>CLIENT PORTAL</strong></div>
+  <a class="logout" href="/auth/logout">Sign out</a>
+</header>
+
+<main>
+  <div class="col-label">Latest status brief</div>
+  <div id="briefArea"></div>
+
+  <div class="col-label">Decisions on record</div>
+  <div id="decisionsArea"></div>
+</main>
+
+<script>
+async function apiFetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthenticated'); }
+  return res;
+}
+
+async function load() {
+  const res = await apiFetch('/api/portal/summary');
+  if (!res.ok) {
+    document.getElementById('briefArea').innerHTML = '<div class="empty-note">No project assigned to this account yet - contact your admin.</div>';
+    return;
+  }
+  const data = await res.json();
+  document.getElementById('projectName').textContent = data.project_name;
+
+  const briefArea = document.getElementById('briefArea');
+  if (data.brief) {
+    const date = new Date(data.brief.created_at + (data.brief.created_at.endsWith('Z') ? '' : 'Z')).toLocaleDateString();
+    briefArea.innerHTML = `<div class="brief-date">Updated ${date}</div><div class="brief-card">${data.brief.content}</div>`;
+  } else {
+    briefArea.innerHTML = '<div class="empty-note">No status brief has been generated yet.</div>';
+  }
+
+  const decisionsArea = document.getElementById('decisionsArea');
+  if (data.decisions.length) {
+    decisionsArea.innerHTML = data.decisions.map(d => `<div class="decision-item">${d.description}</div>`).join('');
+  } else {
+    decisionsArea.innerHTML = '<div class="empty-note">No decisions on record yet.</div>';
+  }
+}
+
+load();
+</script>
+</body>
+</html>
