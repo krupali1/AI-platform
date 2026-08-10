@@ -128,7 +128,27 @@
   .this-project-label {
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--text-muted); padding: 22px 24px 4px; background: var(--bg);
+    scroll-margin-top: 16px;
   }
+
+  .summary-panel {
+    margin: 10px 24px 20px; background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 10px; padding: 16px 18px;
+    box-shadow: var(--shadow-sm);
+  }
+  .summary-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .summary-panel-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+  .summary-panel-meta { display: flex; align-items: center; gap: 10px; }
+  .summary-panel-time { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .summary-regen-btn {
+    font-family: var(--mono); font-size: 10.5px; color: var(--accent);
+    background: var(--panel); border: 1px solid var(--accent); border-radius: 6px;
+    padding: 5px 10px; cursor: pointer;
+  }
+  .summary-regen-btn:hover { background: var(--accent-bg); }
+  .summary-regen-btn:disabled { opacity: 0.5; cursor: default; }
+  .summary-panel-content { font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; }
+  .summary-panel-empty { color: var(--text-muted); font-size: 12.5px; font-style: italic; }
 
   main {
     display: grid;
@@ -821,10 +841,10 @@
       <div class="sidebar-label">Workspace</div>
       <a class="sidebar-item active" href="/">Dashboard</a>
       <a class="sidebar-item" href="/projects">All Projects</a>
-      <a class="sidebar-item" href="/repository">Repository</a>
       <a class="sidebar-item" id="sidebarAdminLink" href="/admin" style="display:none;">Admin</a>
       <div class="sidebar-label">This Project</div>
       <div class="sidebar-project-name" id="projectTitle">…</div>
+      <a class="sidebar-item" href="/repository">Repository</a>
       <button class="sidebar-item" onclick="toggleTeamPanel()">Team &amp; Keys</button>
       <div class="sidebar-label">Account</div>
       <button class="sidebar-item" onclick="toggleSettings()">AI Provider</button>
@@ -852,7 +872,19 @@
       </table>
     </div>
 
-    <div class="this-project-label">This Project</div>
+    <div class="this-project-label" id="thisProjectAnchor">This Project</div>
+
+    <div class="summary-panel" id="summaryPanel" style="display:none;">
+      <div class="summary-panel-header">
+        <span class="summary-panel-title">Summary</span>
+        <div class="summary-panel-meta">
+          <span class="summary-panel-time" id="summaryTime"></span>
+          <button class="summary-regen-btn" id="summaryRegenBtn" onclick="regenerateSummary()">Regenerate</button>
+        </div>
+      </div>
+      <div class="summary-panel-content" id="summaryContent"></div>
+    </div>
+
     <div class="stepper" id="stepper"></div>
 
     <main id="mainContent">
@@ -980,6 +1012,7 @@ async function loadProjects() {
   if (!projects.length) {
     document.getElementById('stepper').style.display = 'none';
     document.getElementById('mainContent').style.display = 'none';
+    document.getElementById('summaryPanel').style.display = 'none';
     document.getElementById('firstRun').style.display = 'flex';
     document.getElementById('projectTitle').textContent = 'No project';
     return false;
@@ -1317,8 +1350,44 @@ async function createFirstProject() {
 async function refreshAll() {
   await fetchModules();
   await fetchEvents();
+  await loadProjectSummary();
   document.getElementById('results').innerHTML = '';
   document.getElementById('askResult').innerHTML = '';
+}
+
+// The project-wide summary (a synthesized brief covering discussions,
+// decisions, and what's still open) regenerates itself automatically
+// server-side whenever a connector sync brings in new meetings/documents -
+// see /api/run/{module_id} in main.py. This just displays whatever the
+// latest one says, plus a manual Regenerate button for "I want it now."
+async function loadProjectSummary() {
+  const panel = document.getElementById('summaryPanel');
+  if (!currentProjectId) { panel.style.display = 'none'; return; }
+  const res = await apiFetch('/api/records/briefs');
+  const briefs = await res.json();
+  const latest = briefs && briefs.length ? briefs[0] : null;
+  panel.style.display = 'block';
+  const content = document.getElementById('summaryContent');
+  const time = document.getElementById('summaryTime');
+  if (!latest) {
+    content.innerHTML = '<span class="summary-panel-empty">No summary yet - sync some meetings or documents in Step 2, or click Regenerate once you have.</span>';
+    time.textContent = '';
+    return;
+  }
+  content.textContent = latest.content;
+  time.textContent = 'updated ' + timeAgo(latest.created_at);
+}
+
+async function regenerateSummary() {
+  if (!currentProjectId) return;
+  const btn = document.getElementById('summaryRegenBtn');
+  btn.disabled = true; btn.textContent = 'Regenerating…';
+  try {
+    await apiFetch('/api/run/brief-generator', { method: 'POST' });
+    await loadProjectSummary();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Regenerate';
+  }
 }
 
 let meCache = null;
@@ -1774,6 +1843,7 @@ function timeAgo(iso) {
   await loadProjects();
   fetchModules();
   fetchEvents();
+  loadProjectSummary();
   setInterval(fetchEvents, 5000);
 })();
 </script>

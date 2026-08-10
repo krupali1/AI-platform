@@ -29,6 +29,31 @@
   }
   a.back:hover { color: var(--text); border-color: var(--accent); }
 
+  .app-shell { display: flex; min-height: calc(100vh - 57px); }
+  .sidebar {
+    width: 220px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--border); padding: 18px 0;
+  }
+  .sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+  .sidebar-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-muted); padding: 6px 12px; margin-top: 14px;
+  }
+  .sidebar-label:first-child { margin-top: 0; }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px;
+    color: var(--text); text-decoration: none; font-size: 13px; cursor: pointer;
+    background: transparent; border: none; width: 100%; text-align: left; font-family: var(--sans);
+  }
+  .sidebar-item:hover { background: var(--accent-bg); }
+  .sidebar-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .sidebar-project-name {
+    font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
+    padding: 4px 12px 10px;
+  }
+  .content-area { flex: 1; min-width: 0; }
+  @media (max-width: 720px) { .sidebar { display: none; } }
+
   main { max-width: 780px; margin: 0 auto; padding: 28px; }
   .col-label {
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
@@ -98,6 +123,23 @@
   <a class="back" href="/">← Console</a>
 </header>
 
+<div class="app-shell">
+  <aside class="sidebar">
+    <nav class="sidebar-nav">
+      <div class="sidebar-label">Workspace</div>
+      <a class="sidebar-item" href="/">Dashboard</a>
+      <a class="sidebar-item" href="/projects">All Projects</a>
+      <a class="sidebar-item active" href="/admin">Admin</a>
+      <div class="sidebar-label">This Project</div>
+      <div class="sidebar-project-name" id="projectTitle">…</div>
+      <a class="sidebar-item" href="/repository">Repository</a>
+      <a class="sidebar-item" href="/#thisProjectAnchor">Back to project</a>
+      <div class="sidebar-label">Account</div>
+      <a class="sidebar-item" href="/auth/logout">Sign out</a>
+    </nav>
+  </aside>
+
+  <div class="content-area">
 <main>
   <div class="col-label">Team access</div>
   <table>
@@ -127,6 +169,8 @@
     <button class="primary" onclick="createProvider()">Create provider</button>
   </div>
 </main>
+  </div>
+</div>
 
 <script>
 async function apiFetch(url, opts) {
@@ -258,8 +302,15 @@ async function deleteProvider(id) {
   await loadProviders();
 }
 
+async function loadCurrentProject() {
+  const res = await apiFetch('/api/projects/current');
+  const current = await res.json();
+  document.getElementById('projectTitle').textContent = current ? current.name : 'No project';
+}
+
 loadUsers();
 loadProviders();
+loadCurrentProject();
 </script>
 </body>
 </html>

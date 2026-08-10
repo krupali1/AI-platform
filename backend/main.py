@@ -1254,6 +1254,7 @@ def oauth_provider_callback(request: Request, code: str = None, state: str = Non
 
 
 NEEDS_USER_KEY = {"extraction-engine", "brief-generator", "contradiction-detector"}
+CONTENT_CONNECTOR_MODULES = {"fireflies-connector", "drive-connector", "gmail-connector"}
 
 
 @app.post("/api/run/{module_id}")
@@ -1296,6 +1297,21 @@ def api_run(module_id: str, request: Request, user: User = Depends(require_role(
             result = rest_connector.run_rest_connector(session, client, rest_conn)
         else:
             result = RUNNERS[module_id](session, client)
+
+        # Keep the project's summary current automatically whenever a sync
+        # actually brought in new meetings/documents - the whole point of
+        # "keeps updating on its own" is not needing to remember to click
+        # Regenerate separately every time a connector runs.
+        wrote_new_content = (
+            (module_id in CONTENT_CONNECTOR_MODULES or rest_conn is not None)
+            and isinstance(result, dict) and result.get("synced", 0) > 0
+        )
+        if wrote_new_content:
+            try:
+                brief_module.generate_brief(session, client, llm_config=get_user_llm_config(user))
+            except Exception:
+                pass  # a failed summary refresh shouldn't fail the sync that triggered it
+
         return {"module_id": module_id, "result": result}
     except Exception as e:
         return {"module_id": module_id, "error": str(e)}
