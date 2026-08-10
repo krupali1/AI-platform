@@ -68,8 +68,8 @@ def _parse_dt(value):
 # ---------- Fireflies ----------
 
 FIREFLIES_QUERY = """
-query GetTranscripts($title: String, $participants: [String!], $limit: Int) {
-  transcripts(title: $title, participants: $participants, limit: $limit) {
+query GetTranscripts($keyword: String, $scope: TranscriptsQueryScope, $participants: [String!], $limit: Int) {
+  transcripts(keyword: $keyword, scope: $scope, participants: $participants, limit: $limit) {
     id
     title
     date
@@ -83,7 +83,7 @@ query GetTranscripts($title: String, $participants: [String!], $limit: Int) {
 """
 
 # Fireflies has no query argument for "any participant at this domain" -
-# only exact participant emails or an exact title match. This fetches
+# only exact participant emails or a keyword/title search. This fetches
 # recent meetings unfiltered, so the domain check below can run against
 # their real participant lists.
 FIREFLIES_RECENT_QUERY = """
@@ -130,7 +130,13 @@ def run_fireflies(session, client):
             return (body or {}).get("data", {}).get("transcripts", []) or []
 
         # Rule 1: title contains the project name - a real, efficient query.
-        for t in _run_query(FIREFLIES_QUERY, {"title": client.name, "limit": 50}):
+        # Uses `keyword` + `scope: title` rather than the deprecated `title`
+        # argument: Fireflies' own docs flag `title` as functional-but-
+        # deprecated with unspecified matching behavior, and in practice it
+        # doesn't filter - it was silently returning every recent transcript
+        # regardless of the project name passed in. `keyword`/`scope` is the
+        # documented, currently-supported replacement for a title-only search.
+        for t in _run_query(FIREFLIES_QUERY, {"keyword": client.name, "scope": "title", "limit": 50}):
             seen[t["id"]] = t
 
         # Explicit team members as participants - a real, efficient query.
