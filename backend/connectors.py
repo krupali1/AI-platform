@@ -31,7 +31,10 @@ FIREFLIES_ENDPOINT = "https://api.fireflies.ai/graphql"
 
 # How many "recent" candidates to scan for the domain-matching rule,
 # since neither API can filter by domain directly - see module docstring.
-DOMAIN_SCAN_LIMIT = 100
+# Fireflies' transcripts query caps `limit` at 50 - asking for more fails
+# the whole call with a generic "Invalid argument(s) were provided", not
+# a clamped result, so this can't just be turned up for wider scans.
+DOMAIN_SCAN_LIMIT = 50
 
 
 def _log(session, client, module_id, status, message):
