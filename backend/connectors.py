@@ -68,8 +68,8 @@ def _parse_dt(value):
 # ---------- Fireflies ----------
 
 FIREFLIES_QUERY = """
-query GetTranscripts($keyword: String, $scope: TranscriptsQueryScope, $participants: [String!], $limit: Int) {
-  transcripts(keyword: $keyword, scope: $scope, participants: $participants, limit: $limit) {
+query GetTranscripts($keyword: String, $participants: [String!], $limit: Int) {
+  transcripts(keyword: $keyword, scope: title, participants: $participants, limit: $limit) {
     id
     title
     date
@@ -134,9 +134,13 @@ def run_fireflies(session, client):
         # argument: Fireflies' own docs flag `title` as functional-but-
         # deprecated with unspecified matching behavior, and in practice it
         # doesn't filter - it was silently returning every recent transcript
-        # regardless of the project name passed in. `keyword`/`scope` is the
-        # documented, currently-supported replacement for a title-only search.
-        for t in _run_query(FIREFLIES_QUERY, {"keyword": client.name, "scope": "title", "limit": 50}):
+        # regardless of the project name passed in. `scope` is written as a
+        # literal in the query text above rather than a typed variable -
+        # their docs name the enum type "TranscriptsQueryScope", but that
+        # type doesn't actually exist in their live schema ("Unknown type"),
+        # so declaring $scope: TranscriptsQueryScope fails validation. A
+        # bare enum literal sidesteps needing to know its real type name.
+        for t in _run_query(FIREFLIES_QUERY, {"keyword": client.name, "limit": 50}):
             seen[t["id"]] = t
 
         # Explicit team members as participants - a real, efficient query.
