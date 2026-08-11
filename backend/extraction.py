@@ -29,6 +29,11 @@ import datetime
 
 from models import Meeting, Document, Decision, ActionItem, OpenQuestion, Event
 
+# Marks a synthesized_summary as a demo-mode placeholder rather than a real
+# one, so a later live run can tell the two apart and backfill it - see
+# run_extraction's needs_summary check.
+_DEMO_SUMMARY_PREFIX = "Demo mode"
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 EXTRACTION_PROMPT = """You are processing raw content tied to a consulting engagement. The content is either a meeting transcript or a written document.
@@ -88,7 +93,16 @@ def run_extraction(session, client, llm_config=None):
     for source_type, obj, content in sources:
         if not content:
             continue
-        needs_summary = not obj.synthesized_summary
+        # A record whose only summary is a demo-mode placeholder isn't
+        # "already processed" once a real llm_config is available - it was
+        # written when no key was configured (or during the auto-sync gap
+        # before that was fixed to skip rather than downgrade) and would
+        # otherwise be stuck with placeholder text forever, since the plain
+        # not-empty check below can't tell a placeholder from a real one.
+        # Only backfills on a live run - re-running in demo mode still
+        # correctly leaves an existing demo summary alone.
+        is_demo_summary = (obj.synthesized_summary or "").startswith(_DEMO_SUMMARY_PREFIX)
+        needs_summary = not obj.synthesized_summary or (llm_config and is_demo_summary)
         needs_facts = (source_type, obj.id) not in already_facts
         if not needs_summary and not needs_facts:
             continue  # already fully processed - skip the API call entirely
@@ -173,5 +187,5 @@ def _demo_summary(content):
     if excerpt and not excerpt.endswith((".", "!", "?")):
         excerpt += "."
     if not excerpt:
-        return "Demo mode - no AI provider key set for this account, and no content to summarize."
-    return f"Demo mode (no AI provider key set for this account, so this is the opening of the raw content, not a real synthesized summary): {excerpt}"
+        return f"{_DEMO_SUMMARY_PREFIX} - no AI provider key set for this account, and no content to summarize."
+    return f"{_DEMO_SUMMARY_PREFIX} (no AI provider key set for this account, so this is the opening of the raw content, not a real synthesized summary): {excerpt}"
