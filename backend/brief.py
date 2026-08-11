@@ -13,7 +13,13 @@ from models import Meeting, Document, Decision, ActionItem, OpenQuestion, Brief,
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-BRIEF_PROMPT = """Write a complete status summary for this consulting engagement, using only the records below. The reader has never seen this project before and needs to come away fully understanding it: the context and background, everything discussed across meetings and documents, what's been decided and why, what's still open or at risk, what's outstanding, and any other detail that matters to genuinely understanding where this engagement stands. Be thorough, not brief - cover everything relevant in the records rather than compressing to a highlight reel. Organize it however the content actually calls for - by topic, by workstream, chronologically, whatever fits - using headers where they help a reader navigate a long document.
+BRIEF_PROMPT = """Write a complete status summary for this consulting engagement, using only the records below. The reader has never seen this project before and needs to come away fully understanding it: the context and background, everything discussed across meetings and documents, what's been decided and why, what's still open or at risk, what's outstanding, and any other detail that matters to genuinely understanding where this engagement stands. Be thorough, not brief - cover everything relevant in the records rather than compressing to a highlight reel. Organize it however the content actually calls for - by topic, by workstream, chronologically, whatever fits - using headers to break it into sections a reader can scan.
+
+Formatting:
+- A short "#### Heading" line to start each section.
+- **Bold** the key term or takeaway at the start of an important point, not whole sentences.
+- Use numbered lists (1. 2. 3.) for any list of items - decisions, action items, open questions, steps, whatever - never dashes or asterisks as bullets.
+- Plain paragraphs for narrative/context that isn't actually a list.
 
 Do not open with any preamble, meta-commentary, or restatement of what this document is (no "Here is a status brief...", no "This document summarizes...", no generic "Overview" header to start). Begin directly with the actual substance - the first words on the page should be real content about the engagement itself. Do not invent anything not present in the records.
 
