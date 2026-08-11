@@ -1491,17 +1491,28 @@ def api_run(module_id: str, request: Request, user: User = Depends(require_role(
         else:
             result = RUNNERS[module_id](session, client)
 
-        # Keep the project's summary current automatically whenever a sync
-        # actually brought in new meetings/documents - the whole point of
-        # "keeps updating on its own" is not needing to remember to click
-        # Regenerate separately every time a connector runs.
+        # Keep each record's own summary, and the project's overall brief,
+        # current automatically whenever a sync actually brought in new
+        # meetings/documents - the whole point of "keeps updating on its
+        # own" is not needing to remember to separately click RUN on
+        # Extraction and then Regenerate every time a connector runs.
+        # Extraction goes first: it's what actually writes each record's
+        # synthesized_summary (without it, a freshly-synced document
+        # contributes nothing readable to the brief generated right after -
+        # meetings at least fall back to their raw Fireflies summary, but
+        # documents have no such fallback).
         wrote_new_content = (
             (module_id in CONTENT_CONNECTOR_MODULES or rest_conn is not None)
             and isinstance(result, dict) and result.get("synced", 0) > 0
         )
         if wrote_new_content:
+            auto_llm_config = get_user_llm_config(user)
             try:
-                brief_module.generate_brief(session, client, llm_config=get_user_llm_config(user))
+                extraction.run_extraction(session, client, llm_config=auto_llm_config)
+            except Exception:
+                pass  # a failed extraction shouldn't fail the sync that triggered it
+            try:
+                brief_module.generate_brief(session, client, llm_config=auto_llm_config)
             except Exception:
                 pass  # a failed summary refresh shouldn't fail the sync that triggered it
 
