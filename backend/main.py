@@ -481,6 +481,52 @@ def update_project(project_id: int, payload: ProjectUpdatePayload, user: User = 
     return out
 
 
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: int, request: Request, user: User = Depends(require_role("admin", "member"))):
+    """Deletes a project and everything scoped to it - meetings, documents,
+    decisions, action items, briefs, open questions, contradictions, agent
+    outputs, the event log, and its links to shared agents/connectors/OAuth
+    connections. Shared PromptEngine/RestConnector definitions themselves
+    aren't deleted (they may still serve other projects) - only this
+    project's association with them, via the same *Project join tables
+    used to scope them in the first place.
+
+    Frontend loops this per id for "delete multiple" / "delete all" -
+    there's no separate bulk endpoint, same pattern as Repository's
+    existing per-record bulk delete."""
+    session = SessionLocal()
+    project = session.query(Client).filter_by(id=project_id).first()
+    if not project:
+        session.close()
+        raise HTTPException(404, "project not found")
+
+    for model in (Meeting, Document, Decision, ActionItem, Brief, OpenQuestion,
+                  Contradiction, EngineOutput, Event):
+        session.query(model).filter_by(client_id=project_id).delete()
+    session.query(PromptEngineProject).filter_by(client_id=project_id).delete()
+    session.query(RestConnectorProject).filter_by(client_id=project_id).delete()
+    session.query(RestConnectorCredential).filter_by(client_id=project_id).delete()
+    session.query(OAuthConnection).filter_by(client_id=project_id).delete()
+    # Not a scoping reference (see PromptEngine/RestConnector's own
+    # comments) - just "created from" metadata, cleared so it doesn't
+    # dangle at a client_id that no longer exists.
+    session.query(PromptEngine).filter_by(client_id=project_id).update({"client_id": None})
+    session.query(RestConnector).filter_by(client_id=project_id).update({"client_id": None})
+    # A client-role user locked to this project would otherwise be locked
+    # to a project id that no longer exists - get_current_project already
+    # degrades that to "no project" rather than crashing, but clearing it
+    # explicitly is more honest than leaving a dangling reference.
+    session.query(User).filter_by(locked_project_id=project_id).update({"locked_project_id": None})
+
+    session.delete(project)
+    session.commit()
+    session.close()
+
+    if request.session.get("project_id") == project_id:
+        request.session.pop("project_id", None)
+
+    return {"ok": True}
+
 
 class CredentialPayload(BaseModel):
     value: str

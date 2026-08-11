@@ -131,6 +131,33 @@
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
     color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 3px; padding: 2px 6px;
   }
+  .projects-table th.proj-check-col, .projects-table td.proj-check-col { width: 32px; padding-right: 0; }
+  .projects-table .row-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .projects-table .proj-delete-btn {
+    font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 10px; cursor: pointer;
+  }
+  .projects-table .proj-delete-btn:hover { color: var(--bad); border-color: var(--bad); }
+  .projects-bulk-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .projects-bulk-bar-right { display: flex; gap: 8px; }
+  .select-all {
+    display: flex; align-items: center; gap: 8px; font-family: var(--mono);
+    font-size: 11.5px; color: var(--text-muted); cursor: pointer;
+  }
+  .select-all input, .item-checkbox { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .bulk-delete-btn {
+    font-family: var(--mono); font-size: 11.5px; color: var(--bad);
+    background: var(--panel); border: 1px solid var(--bad); border-radius: 6px;
+    padding: 6px 12px; cursor: pointer;
+  }
+  .bulk-delete-btn:hover { background: var(--bad-bg); }
+  .delete-all-btn {
+    font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 12px; cursor: pointer;
+  }
+  .delete-all-btn:hover { color: var(--bad); border-color: var(--bad); }
   .this-project-label {
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--text-muted); padding: 22px 24px 4px; background: var(--bg);
@@ -881,8 +908,18 @@
 
     <div class="all-projects-section">
       <div class="col-label">All Projects</div>
+      <div class="projects-bulk-bar">
+        <label class="select-all">
+          <input type="checkbox" id="projectSelectAllBox" onchange="toggleSelectAllProjects(this.checked)" />
+          Select all
+        </label>
+        <div class="projects-bulk-bar-right">
+          <button class="bulk-delete-btn" id="projectBulkDeleteBtn" style="display:none;" onclick="deleteSelectedProjects()">Delete selected (<span id="projectSelectedCount">0</span>)</button>
+          <button class="delete-all-btn" id="projectDeleteAllBtn" onclick="deleteAllProjects()">Delete all</button>
+        </div>
+      </div>
       <table class="projects-table">
-        <thead><tr><th>Project</th><th>Domain</th><th>Activity</th><th></th></tr></thead>
+        <thead><tr><th class="proj-check-col"></th><th>Project</th><th>Domain</th><th>Activity</th><th></th></tr></thead>
         <tbody id="projectsTableBody"></tbody>
       </table>
     </div>
@@ -1111,10 +1148,16 @@ async function loadProjects() {
   return true;
 }
 
+let selectedProjects = new Set();
+
 function renderProjectsTable() {
   const body = document.getElementById('projectsTableBody');
+  // Drop selections for projects that no longer exist (e.g. after a delete).
+  const liveIds = new Set(allProjects.map(p => p.id));
+  selectedProjects.forEach(id => { if (!liveIds.has(id)) selectedProjects.delete(id); });
+  updateProjectBulkBar();
   if (!allProjects.length) {
-    body.innerHTML = '<tr><td colspan="4" class="proj-domain">No projects yet - use "+ New Project" above to create one.</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" class="proj-domain">No projects yet - use "+ New Project" above to create one.</td></tr>';
     return;
   }
   body.innerHTML = allProjects.map(p => {
@@ -1124,18 +1167,94 @@ function renderProjectsTable() {
       : '<div class="proj-summary-snippet proj-summary-empty">No summary yet</div>';
     return `
     <tr class="${p.id === currentProjectId ? 'current-row' : ''}">
+      <td class="proj-check-col">
+        <input type="checkbox" class="item-checkbox" ${selectedProjects.has(p.id) ? 'checked' : ''}
+          onchange="toggleProjectSelect(${p.id}, this.checked)" onclick="event.stopPropagation()" />
+      </td>
       <td>
         <div class="proj-name">${p.name}</div>
         ${snippet}
       </td>
       <td class="proj-domain">${p.domain || '—'}</td>
       <td class="proj-counts">${p.meetings_count + p.documents_count} synced · ${p.decisions_count} decisions</td>
-      <td>${isCurrentAndOpen
-        ? '<span class="current-pill">current</span>'
-        : `<button class="open-btn" onclick="onProjectSelect(${p.id})">Open →</button>`}</td>
+      <td>
+        <div class="row-actions">
+          ${isCurrentAndOpen
+            ? '<span class="current-pill">current</span>'
+            : `<button class="open-btn" onclick="onProjectSelect(${p.id})">Open →</button>`}
+          <button class="proj-delete-btn" onclick="deleteProject(${p.id})">Delete</button>
+        </div>
+      </td>
     </tr>
   `;
   }).join('');
+}
+
+function toggleProjectSelect(id, checked) {
+  if (checked) selectedProjects.add(id); else selectedProjects.delete(id);
+  updateProjectBulkBar();
+}
+
+function toggleSelectAllProjects(checked) {
+  selectedProjects = checked ? new Set(allProjects.map(p => p.id)) : new Set();
+  renderProjectsTable();
+}
+
+function updateProjectBulkBar() {
+  const count = selectedProjects.size;
+  document.getElementById('projectSelectedCount').textContent = count;
+  document.getElementById('projectBulkDeleteBtn').style.display = count > 0 ? 'inline-block' : 'none';
+  document.getElementById('projectSelectAllBox').checked = allProjects.length > 0 && count === allProjects.length;
+}
+
+// One project at a time, whichever way it's triggered - a single delete
+// button, "delete selected", or "delete all" all funnel through this, since
+// deleting a project is a full cleanup (meetings, documents, decisions,
+// briefs, everything scoped to it) that the backend does per-id, not as a
+// single bulk call.
+async function deleteProjectsByIds(ids) {
+  for (const id of ids) {
+    const res = await apiFetch(`/api/projects/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert(body.detail || `Could not delete project #${id}`);
+      return false;
+    }
+    selectedProjects.delete(id);
+  }
+  return true;
+}
+
+async function deleteProject(id) {
+  const project = allProjects.find(p => p.id === id);
+  const name = project ? project.name : 'this project';
+  if (!confirm(`Delete "${name}"? This permanently removes every meeting, document, decision, action item, brief, and everything else stored for it. This cannot be undone.`)) return;
+  const wasCurrent = id === currentProjectId;
+  if (!(await deleteProjectsByIds([id]))) return;
+  if (wasCurrent) { currentProjectId = null; projectExpanded = false; }
+  await loadProjects();
+}
+
+async function deleteSelectedProjects() {
+  const ids = Array.from(selectedProjects);
+  if (!ids.length) return;
+  const label = ids.length === 1 ? '1 project' : `${ids.length} projects`;
+  if (!confirm(`Delete ${label}? This permanently removes every meeting, document, decision, action item, brief, and everything else stored for each. This cannot be undone.`)) return;
+  const includesCurrent = ids.includes(currentProjectId);
+  if (!(await deleteProjectsByIds(ids))) return;
+  if (includesCurrent) { currentProjectId = null; projectExpanded = false; }
+  await loadProjects();
+}
+
+async function deleteAllProjects() {
+  if (!allProjects.length) return;
+  const label = allProjects.length === 1 ? '1 project' : `all ${allProjects.length} projects`;
+  if (!confirm(`Delete ${label}? This permanently removes every meeting, document, decision, action item, brief, and everything else stored for each. This cannot be undone.`)) return;
+  const ids = allProjects.map(p => p.id);
+  if (!(await deleteProjectsByIds(ids))) return;
+  currentProjectId = null;
+  projectExpanded = false;
+  await loadProjects();
 }
 
 function renderKeywordsLine(project) {
