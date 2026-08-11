@@ -68,8 +68,8 @@ def _parse_dt(value):
 # ---------- Fireflies ----------
 
 FIREFLIES_QUERY = """
-query GetTranscripts($keyword: String, $participants: [String!], $limit: Int) {
-  transcripts(keyword: $keyword, scope: title, participants: $participants, limit: $limit) {
+query GetTranscripts($keyword: String, $scope: String, $participants: [String!], $limit: Int) {
+  transcripts(keyword: $keyword, scope: $scope, participants: $participants, limit: $limit) {
     id
     title
     date
@@ -130,17 +130,22 @@ def run_fireflies(session, client):
             return (body or {}).get("data", {}).get("transcripts", []) or []
 
         # Rule 1: title contains the project name - a real, efficient query.
-        # Uses `keyword` + `scope: title` rather than the deprecated `title`
-        # argument: Fireflies' own docs flag `title` as functional-but-
-        # deprecated with unspecified matching behavior, and in practice it
-        # doesn't filter - it was silently returning every recent transcript
-        # regardless of the project name passed in. `scope` is written as a
-        # literal in the query text above rather than a typed variable -
-        # their docs name the enum type "TranscriptsQueryScope", but that
-        # type doesn't actually exist in their live schema ("Unknown type"),
-        # so declaring $scope: TranscriptsQueryScope fails validation. A
-        # bare enum literal sidesteps needing to know its real type name.
-        for t in _run_query(FIREFLIES_QUERY, {"keyword": client.name, "limit": 50}):
+        # Uses `keyword` + `scope: "title"` rather than the deprecated
+        # `title` argument: Fireflies' own docs flag `title` as functional-
+        # but-deprecated with unspecified matching behavior, and in practice
+        # it doesn't filter - it was silently returning every recent
+        # transcript regardless of the project name passed in.
+        #
+        # Their docs are wrong about `scope` in two different ways, found
+        # the hard way: first the docs name its type "TranscriptsQueryScope"
+        # as if it's an enum, but that type doesn't exist in the live schema
+        # ("Unknown type"). Passing it as a bare enum literal instead (no
+        # declared type) got further but still failed - turns out `scope`
+        # is genuinely just a String argument server-side, so a bare
+        # unquoted `title` token is invalid GraphQL syntax for it ("String
+        # cannot represent a non string value"). A real $scope: String
+        # variable holding "title" is what their schema actually wants.
+        for t in _run_query(FIREFLIES_QUERY, {"keyword": client.name, "scope": "title", "limit": 50}):
             seen[t["id"]] = t
 
         # Explicit team members as participants - a real, efficient query.
