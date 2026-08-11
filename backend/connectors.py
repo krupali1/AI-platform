@@ -105,7 +105,11 @@ query GetRecentTranscripts($limit: Int) {
 def run_fireflies(session, client):
     api_key = decrypt(client.encrypted_fireflies_key)
     domain = _normalize_domain(client.domain)
-    team_emails = _split_list(client.team_emails)
+    # client.team_emails is intentionally not read here - it used to also
+    # match any meeting a listed team member personally attended, but that
+    # caught unrelated meetings whenever someone worked across projects.
+    # The field itself is untouched (still stored, still editable from Team
+    # & Keys); it's just no longer a data-extraction signal.
 
     if not api_key:
         return _fireflies_demo(session, client, "no Fireflies API key set for this team")
@@ -148,11 +152,6 @@ def run_fireflies(session, client):
         for t in _run_query(FIREFLIES_QUERY, {"keyword": client.name, "scope": "title", "limit": 50}):
             seen[t["id"]] = t
 
-        # Explicit team members as participants - a real, efficient query.
-        if team_emails:
-            for t in _run_query(FIREFLIES_QUERY, {"participants": team_emails, "limit": 50}):
-                seen[t["id"]] = t
-
         # Rule 2: anyone at the client domain as a participant - no API
         # filter for this exists, so scan recent meetings and check
         # participant emails in code.
@@ -188,8 +187,6 @@ def run_fireflies(session, client):
         session.commit()
 
         criteria = [f"title contains \"{client.name}\""]
-        if team_emails:
-            criteria.append(f"{len(team_emails)} team member(s) as participant")
         if domain:
             criteria.append(f"@{domain} participant (scanned last {DOMAIN_SCAN_LIMIT} meetings, {domain_matched} matched)")
         else:
@@ -213,12 +210,6 @@ def _fireflies_demo(session, client, reason):
     _log(session, client, "fireflies-connector", "success",
          f"Demo mode - generated {count} sample meeting(s) ({reason}).")
     return {"synced": count, "demo": True}
-
-
-def _split_list(value):
-    if not value:
-        return []
-    return [v.strip() for v in value.split(",") if v.strip()]
 
 
 def _demo_meetings(client):
