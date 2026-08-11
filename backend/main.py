@@ -1400,15 +1400,30 @@ def run_auto_sync_for_project(session, client):
 
     if synced_any:
         llm_config = get_automation_llm_config()
-        for step_name, step in (
-            ("extraction", lambda: extraction.run_extraction(session, client, llm_config=llm_config)),
-            ("contradiction-check", lambda: contradiction.run_contradiction_check(session, client, llm_config=llm_config)),
-            ("brief", lambda: brief_module.generate_brief(session, client, llm_config=llm_config)),
-        ):
-            try:
-                step()
-            except Exception as e:
-                print(f"[auto-sync] {step_name} failed for project {client.id}: {e}", flush=True)
+        if llm_config:
+            for step_name, step in (
+                ("extraction", lambda: extraction.run_extraction(session, client, llm_config=llm_config)),
+                ("contradiction-check", lambda: contradiction.run_contradiction_check(session, client, llm_config=llm_config)),
+                ("brief", lambda: brief_module.generate_brief(session, client, llm_config=llm_config)),
+            ):
+                try:
+                    step()
+                except Exception as e:
+                    print(f"[auto-sync] {step_name} failed for project {client.id}: {e}", flush=True)
+        else:
+            # No server-wide key configured - same principle as skipping
+            # connectors above, applied here too. Each of these three either
+            # writes a demo placeholder that outranks ("latest") a real
+            # brief already on record, or (contradiction-check) wipes and
+            # regenerates its whole result set from scratch every run - an
+            # unattended cycle silently regressing real, synthesized output
+            # to a placeholder would be actively harmful, not just a no-op.
+            # Leaving existing extraction/brief/contradiction output alone
+            # is strictly safer than that; a manual RUN with a per-user key
+            # still generates real output on demand.
+            print(f"[auto-sync] project {client.id}: synced new content but no server-wide "
+                  f"AI key configured - skipping extraction/brief/contradiction to avoid "
+                  f"regressing real output to a demo placeholder", flush=True)
 
     return synced_any
 
