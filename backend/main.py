@@ -1398,11 +1398,23 @@ def run_auto_sync_for_project(session, client):
         except Exception as e:
             print(f"[auto-sync] connector '{rc.display_name}' failed for project {client.id}: {e}", flush=True)
 
-    if synced_any:
-        llm_config = get_automation_llm_config()
-        if llm_config:
+    llm_config = get_automation_llm_config()
+    if llm_config:
+        # Extraction runs every cycle, not just ones that synced something
+        # new - it already skips any record that doesn't need summarizing,
+        # so this is what catches up a project's backlog (records synced
+        # before a key was configured, or before this existed) within one
+        # tick instead of leaving them stuck until something new happens
+        # to sync again.
+        extracted_new = False
+        try:
+            extraction_result = extraction.run_extraction(session, client, llm_config=llm_config)
+            extracted_new = isinstance(extraction_result, dict) and sum(extraction_result.values()) > 0
+        except Exception as e:
+            print(f"[auto-sync] extraction failed for project {client.id}: {e}", flush=True)
+
+        if synced_any or extracted_new:
             for step_name, step in (
-                ("extraction", lambda: extraction.run_extraction(session, client, llm_config=llm_config)),
                 ("contradiction-check", lambda: contradiction.run_contradiction_check(session, client, llm_config=llm_config)),
                 ("brief", lambda: brief_module.generate_brief(session, client, llm_config=llm_config)),
             ):
@@ -1410,20 +1422,20 @@ def run_auto_sync_for_project(session, client):
                     step()
                 except Exception as e:
                     print(f"[auto-sync] {step_name} failed for project {client.id}: {e}", flush=True)
-        else:
-            # No server-wide key configured - same principle as skipping
-            # connectors above, applied here too. Each of these three either
-            # writes a demo placeholder that outranks ("latest") a real
-            # brief already on record, or (contradiction-check) wipes and
-            # regenerates its whole result set from scratch every run - an
-            # unattended cycle silently regressing real, synthesized output
-            # to a placeholder would be actively harmful, not just a no-op.
-            # Leaving existing extraction/brief/contradiction output alone
-            # is strictly safer than that; a manual RUN with a per-user key
-            # still generates real output on demand.
-            print(f"[auto-sync] project {client.id}: synced new content but no server-wide "
-                  f"AI key configured - skipping extraction/brief/contradiction to avoid "
-                  f"regressing real output to a demo placeholder", flush=True)
+    elif synced_any:
+        # No server-wide key configured - same principle as skipping
+        # connectors above, applied here too. Each of these three either
+        # writes a demo placeholder that outranks ("latest") a real
+        # brief already on record, or (contradiction-check) wipes and
+        # regenerates its whole result set from scratch every run - an
+        # unattended cycle silently regressing real, synthesized output
+        # to a placeholder would be actively harmful, not just a no-op.
+        # Leaving existing extraction/brief/contradiction output alone
+        # is strictly safer than that; a manual RUN with a per-user key
+        # still generates real output on demand.
+        print(f"[auto-sync] project {client.id}: synced new content but no server-wide "
+              f"AI key configured - skipping extraction/brief/contradiction to avoid "
+              f"regressing real output to a demo placeholder", flush=True)
 
     return synced_any
 
@@ -1492,29 +1504,30 @@ def api_run(module_id: str, request: Request, user: User = Depends(require_role(
             result = RUNNERS[module_id](session, client)
 
         # Keep each record's own summary, and the project's overall brief,
-        # current automatically whenever a sync actually brought in new
-        # meetings/documents - the whole point of "keeps updating on its
-        # own" is not needing to remember to separately click RUN on
-        # Extraction and then Regenerate every time a connector runs.
-        # Extraction goes first: it's what actually writes each record's
-        # synthesized_summary (without it, a freshly-synced document
-        # contributes nothing readable to the brief generated right after -
-        # meetings at least fall back to their raw Fireflies summary, but
-        # documents have no such fallback).
-        wrote_new_content = (
-            (module_id in CONTENT_CONNECTOR_MODULES or rest_conn is not None)
-            and isinstance(result, dict) and result.get("synced", 0) > 0
-        )
-        if wrote_new_content:
+        # current automatically after any connector run - not just ones
+        # that happened to sync something new. run_extraction() already
+        # skips any record that doesn't need summarizing, so calling it
+        # unconditionally is cheap when there's nothing to do and is what
+        # actually catches up a project's backlog (records that synced
+        # before a key was configured, or before this auto-chain existed)
+        # instead of leaving it stuck on "no summary yet - run the
+        # extraction engine" until someone remembers to click RUN there.
+        is_connector_run = module_id in CONTENT_CONNECTOR_MODULES or rest_conn is not None
+        if is_connector_run:
             auto_llm_config = get_user_llm_config(user)
+            extracted_new = False
             try:
-                extraction.run_extraction(session, client, llm_config=auto_llm_config)
+                extraction_result = extraction.run_extraction(session, client, llm_config=auto_llm_config)
+                extracted_new = isinstance(extraction_result, dict) and sum(extraction_result.values()) > 0
             except Exception:
                 pass  # a failed extraction shouldn't fail the sync that triggered it
-            try:
-                brief_module.generate_brief(session, client, llm_config=auto_llm_config)
-            except Exception:
-                pass  # a failed summary refresh shouldn't fail the sync that triggered it
+
+            wrote_new_content = isinstance(result, dict) and result.get("synced", 0) > 0
+            if wrote_new_content or extracted_new:
+                try:
+                    brief_module.generate_brief(session, client, llm_config=auto_llm_config)
+                except Exception:
+                    pass  # a failed summary refresh shouldn't fail the sync that triggered it
 
         return {"module_id": module_id, "result": result}
     except Exception as e:
