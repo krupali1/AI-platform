@@ -109,10 +109,21 @@
   .sidebar-item:hover { background: var(--accent-bg); }
   .sidebar-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
   .sidebar-subitem { padding-left: 26px; font-size: 12.5px; }
+  .sidebar-caret { margin-left: auto; color: var(--text-muted); font-size: 10px; transition: transform 0.15s ease; }
+  .sidebar-caret.open { transform: scaleY(-1); }
+  .sidebar-project-row { display: flex; align-items: center; gap: 4px; padding: 4px 8px 10px 12px; }
   .sidebar-project-name {
     font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
-    padding: 4px 12px 10px;
+    text-decoration: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .sidebar-project-name:hover { color: var(--accent); }
+  .sidebar-group-caret-btn {
+    background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-muted);
+    display: flex; align-items: center; border-radius: 4px;
+  }
+  .sidebar-group-caret-btn:hover { background: var(--accent-bg); }
+  #thisProjectGroup { display: flex; flex-direction: column; gap: 2px; }
+  #projectSetupSubmenu { display: flex; flex-direction: column; gap: 2px; }
   .content-area { flex: 1; min-width: 0; }
   @media (max-width: 720px) { .sidebar { display: none; } }
 </style>
@@ -132,13 +143,24 @@
       <a class="sidebar-item" href="/projects">All Projects</a>
       <a class="sidebar-item" id="sidebarAdminLink" href="/admin" style="display:none;">Admin</a>
       <div class="sidebar-label">This Project</div>
-      <div class="sidebar-project-name" id="projectTitle">…</div>
-      <a class="sidebar-item active" href="/repository">Repository</a>
-      <div class="sidebar-item" style="cursor:default;">Project Setup</div>
-      <a class="sidebar-item sidebar-subitem" href="/?step=1">1. Set up project</a>
-      <a class="sidebar-item sidebar-subitem" href="/?step=2">2. Extract &amp; store</a>
-      <a class="sidebar-item sidebar-subitem" href="/?step=3">Ask &amp; Search</a>
-      <a class="sidebar-item" href="/?expand=1">Back to project</a>
+      <div class="sidebar-project-row">
+        <a class="sidebar-project-name" id="projectTitle" href="/?expand=1" title="Back to project">…</a>
+        <button class="sidebar-group-caret-btn" id="thisProjectCaretBtn" onclick="toggleThisProjectMenu()" title="Collapse/expand">
+          <span class="sidebar-caret" id="thisProjectCaret">▾</span>
+        </button>
+      </div>
+      <div id="thisProjectGroup">
+        <a class="sidebar-item active" href="/repository">Repository</a>
+        <button class="sidebar-item" onclick="toggleProjectSetupMenu()">
+          Project Setup
+          <span class="sidebar-caret" id="projectSetupCaret">▾</span>
+        </button>
+        <div id="projectSetupSubmenu" style="display:none;">
+          <a class="sidebar-item sidebar-subitem" href="/?step=1">1. Set up project</a>
+          <a class="sidebar-item sidebar-subitem" href="/?step=2">2. Extract &amp; store</a>
+          <a class="sidebar-item sidebar-subitem" href="/?step=3">Ask &amp; Search</a>
+        </div>
+      </div>
       <div class="sidebar-label">Account</div>
       <a class="sidebar-item" href="/auth/logout">Sign out</a>
     </nav>
@@ -396,6 +418,22 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function toggleProjectSetupMenu() {
+  const submenu = document.getElementById('projectSetupSubmenu');
+  const caret = document.getElementById('projectSetupCaret');
+  const opening = submenu.style.display === 'none';
+  submenu.style.display = opening ? 'flex' : 'none';
+  caret.classList.toggle('open', opening);
+}
+
+function toggleThisProjectMenu() {
+  const group = document.getElementById('thisProjectGroup');
+  const caret = document.getElementById('thisProjectCaret');
+  const opening = group.style.display === 'none';
+  group.style.display = opening ? 'flex' : 'none';
+  caret.classList.toggle('open', opening);
 }
 
 async function loadRole() {

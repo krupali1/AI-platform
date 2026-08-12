@@ -94,11 +94,20 @@
   .sidebar-item:hover { background: var(--accent-bg); }
   .sidebar-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
   .sidebar-item .icon { width: 16px; text-align: center; flex-shrink: 0; }
+  .sidebar-project-row { display: flex; align-items: center; gap: 4px; padding: 4px 8px 10px 12px; }
   .sidebar-project-name {
     font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
-    padding: 4px 12px 10px;
+    text-decoration: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; background: none; border: none; cursor: pointer; text-align: left; padding: 0;
   }
-  .sidebar-caret { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+  .sidebar-project-name:hover { color: var(--accent); }
+  .sidebar-group-caret-btn {
+    background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-muted);
+    display: flex; align-items: center; border-radius: 4px;
+  }
+  .sidebar-group-caret-btn:hover { background: var(--accent-bg); }
+  #thisProjectGroup { display: flex; flex-direction: column; gap: 2px; }
+  .sidebar-caret { margin-left: auto; color: var(--text-muted); font-size: 10px; transition: transform 0.15s ease; }
   .sidebar-caret.open { transform: scaleY(-1); }
   .sidebar-subitem { padding-left: 26px; font-size: 12.5px; }
 
@@ -927,18 +936,25 @@
       <a class="sidebar-item" href="/projects">All Projects</a>
       <a class="sidebar-item" id="sidebarAdminLink" href="/admin" style="display:none;">Admin</a>
       <div class="sidebar-label">This Project</div>
-      <div class="sidebar-project-name" id="projectTitle">…</div>
-      <a class="sidebar-item" href="/repository">Repository</a>
-      <button class="sidebar-item" onclick="toggleProjectSetupMenu()">
-        Project Setup
-        <span class="sidebar-caret" id="projectSetupCaret">▾</span>
-      </button>
-      <div id="projectSetupSubmenu" style="display:none;">
-        <a class="sidebar-item sidebar-subitem" href="/?step=1" onclick="return jumpToStep(1, event)">1. Set up project</a>
-        <a class="sidebar-item sidebar-subitem" href="/?step=2" onclick="return jumpToStep(2, event)">2. Extract &amp; store</a>
-        <a class="sidebar-item sidebar-subitem" href="/?step=3" onclick="return jumpToStep(3, event)">Ask &amp; Search</a>
+      <div class="sidebar-project-row">
+        <button class="sidebar-project-name" id="projectTitle" onclick="scrollToThisProject()" title="Back to project">…</button>
+        <button class="sidebar-group-caret-btn" id="thisProjectCaretBtn" onclick="toggleThisProjectMenu()" title="Collapse/expand">
+          <span class="sidebar-caret" id="thisProjectCaret">▾</span>
+        </button>
       </div>
-      <button class="sidebar-item" id="teamKeysSidebarBtn" onclick="toggleTeamPanel()" style="display:none;">Team &amp; Keys</button>
+      <div id="thisProjectGroup">
+        <a class="sidebar-item" href="/repository">Repository</a>
+        <button class="sidebar-item" onclick="toggleProjectSetupMenu()">
+          Project Setup
+          <span class="sidebar-caret" id="projectSetupCaret">▾</span>
+        </button>
+        <div id="projectSetupSubmenu" style="display:none;">
+          <a class="sidebar-item sidebar-subitem" href="/?step=1" onclick="return jumpToStep(1, event)">1. Set up project</a>
+          <a class="sidebar-item sidebar-subitem" href="/?step=2" onclick="return jumpToStep(2, event)">2. Extract &amp; store</a>
+          <a class="sidebar-item sidebar-subitem" href="/?step=3" onclick="return jumpToStep(3, event)">Ask &amp; Search</a>
+        </div>
+        <button class="sidebar-item" id="teamKeysSidebarBtn" onclick="toggleTeamPanel()" style="display:none;">Team &amp; Keys</button>
+      </div>
       <div class="sidebar-label">Account</div>
       <button class="sidebar-item" onclick="toggleSettings()">AI Provider</button>
       <a class="sidebar-item" href="/auth/logout">Sign out</a>
@@ -1089,6 +1105,23 @@ function toggleProjectSetupMenu() {
   const opening = submenu.style.display === 'none';
   submenu.style.display = opening ? 'flex' : 'none';
   caret.classList.toggle('open', opening);
+}
+
+function toggleThisProjectMenu() {
+  const group = document.getElementById('thisProjectGroup');
+  const caret = document.getElementById('thisProjectCaret');
+  const opening = group.style.display === 'none';
+  group.style.display = opening ? 'flex' : 'none';
+  caret.classList.toggle('open', opening);
+}
+
+// The sidebar's project name button - same destination as Repository/
+// Admin's "Back to project" link used to be (/?expand=1), just in-page
+// here since we're already on the dashboard.
+function scrollToThisProject() {
+  if (!currentProjectId) return;
+  expandProjectSection();
+  document.getElementById('thisProjectAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // A sidebar shortcut into a specific step - the href (/?step=N) is what
