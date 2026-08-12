@@ -164,13 +164,26 @@
     scroll-margin-top: 16px;
   }
 
+  .ask-search-panel {
+    margin: 10px 24px 20px; background: var(--panel); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 10px; padding: 20px 22px;
+    box-shadow: var(--shadow-sm); scroll-margin-top: 16px;
+  }
+  .ask-search-panel .col-label { padding: 0 0 8px; }
+
   .summary-panel {
     margin: 10px 24px 20px; background: var(--panel); border: 1px solid var(--border);
     border-left: 3px solid var(--accent); border-radius: 10px; padding: 16px 18px;
     box-shadow: var(--shadow-sm);
   }
   .summary-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .summary-collapse-btn {
+    display: flex; align-items: center; gap: 6px; background: none; border: none;
+    cursor: pointer; padding: 0; font: inherit;
+  }
   .summary-panel-title { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+  .summary-collapse-caret { color: var(--text-muted); font-size: 10px; transition: transform 0.15s ease; }
+  .summary-collapse-caret.collapsed { transform: scaleY(-1); }
   .summary-panel-meta { display: flex; align-items: center; gap: 10px; }
   .summary-panel-time { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
   .summary-regen-btn {
@@ -923,7 +936,7 @@
       <div id="projectSetupSubmenu" style="display:none;">
         <a class="sidebar-item sidebar-subitem" href="/?step=1" onclick="return jumpToStep(1, event)">1. Set up project</a>
         <a class="sidebar-item sidebar-subitem" href="/?step=2" onclick="return jumpToStep(2, event)">2. Extract &amp; store</a>
-        <a class="sidebar-item sidebar-subitem" href="/?step=3" onclick="return jumpToStep(3, event)">3. Ask &amp; Search</a>
+        <a class="sidebar-item sidebar-subitem" href="/?step=3" onclick="return jumpToStep(3, event)">Ask &amp; Search</a>
       </div>
       <button class="sidebar-item" id="teamKeysSidebarBtn" onclick="toggleTeamPanel()" style="display:none;">Team &amp; Keys</button>
       <div class="sidebar-label">Account</div>
@@ -964,9 +977,29 @@
 
     <div class="this-project-label" id="thisProjectAnchor">This Project</div>
 
+    <div class="ask-search-panel" id="askSearchPanel" style="display:none;">
+      <div class="col-label">Ask a question / Search the database</div>
+      <p class="step-hint">Get a synthesized answer with sources, or do a quick keyword lookup - whichever fits what you need. Always available here, no matter what else you're doing with this project.</p>
+      <div class="query-bar">
+        <input id="askInput" type="text" placeholder="e.g. What did we agree on billing with SBAMI?" />
+        <button onclick="runAsk()">ASK</button>
+      </div>
+      <div id="askResult"></div>
+
+      <div class="col-label" style="margin-top:28px;">Quick search</div>
+      <div class="query-bar">
+        <input id="queryInput" type="text" placeholder="e.g. UHID, HIS/LIS, payment" />
+        <button onclick="runQuery()">SEARCH</button>
+      </div>
+      <div id="results"></div>
+    </div>
+
     <div class="summary-panel" id="summaryPanel" style="display:none;">
       <div class="summary-panel-header">
-        <span class="summary-panel-title">Summary</span>
+        <button class="summary-collapse-btn" id="summaryCollapseBtn" onclick="toggleSummaryCollapsed()" title="Collapse/expand">
+          <span class="summary-panel-title">Summary</span>
+          <span class="summary-collapse-caret" id="summaryCollapseCaret">▾</span>
+        </button>
         <div class="summary-panel-meta">
           <span class="summary-panel-time" id="summaryTime"></span>
           <button class="summary-regen-btn" id="summaryRegenBtn" onclick="regenerateSummary()">Regenerate</button>
@@ -998,24 +1031,6 @@
       <div class="col-label">Step 2 · Extract &amp; store</div>
       <p class="step-hint">Pull in the meetings and documents that match this project, then have Claude read them.</p>
       <div id="modules" class="modules-grid"></div>
-      <button class="step-next-btn" onclick="goToStep(3)">Next: Ask a question / Search →</button>
-    </section>
-
-    <section class="step-panel" id="stepPanel-3" data-step="3">
-      <div class="col-label">Step 3 · Ask a question / Search the database</div>
-      <p class="step-hint">Get a synthesized answer with sources, or do a quick keyword lookup - whichever fits what you need.</p>
-      <div class="query-bar">
-        <input id="askInput" type="text" placeholder="e.g. What did we agree on billing with SBAMI?" />
-        <button onclick="runAsk()">ASK</button>
-      </div>
-      <div id="askResult"></div>
-
-      <div class="col-label" style="margin-top:28px;">Quick search</div>
-      <div class="query-bar">
-        <input id="queryInput" type="text" placeholder="e.g. UHID, HIS/LIS, payment" />
-        <button onclick="runQuery()">SEARCH</button>
-      </div>
-      <div id="results"></div>
     </section>
 
   </div>
@@ -1057,6 +1072,7 @@ let projectExpanded = false;
 function renderProjectExpansion() {
   const show = projectExpanded && !!currentProjectId;
   document.getElementById('thisProjectAnchor').style.display = show ? 'block' : 'none';
+  document.getElementById('askSearchPanel').style.display = show ? 'block' : 'none';
   document.getElementById('summaryPanel').style.display = show ? 'block' : 'none';
   document.getElementById('stepper').style.display = show ? 'flex' : 'none';
   document.getElementById('mainContent').style.display = show ? 'grid' : 'none';
@@ -1087,34 +1103,38 @@ function jumpToStep(n, event) {
   document.getElementById('projectSetupSubmenu').style.display = 'flex';
   document.getElementById('projectSetupCaret').classList.add('open');
   expandProjectSection();
-  goToStep(n);
-  // Scroll to the stepper itself, not thisProjectAnchor - the summary panel
-  // above it can be long, and scrolling to the anchor left the actual step
-  // content (what was clicked) below the fold instead of at the top.
+  // n=3 is a holdover from when Ask/Search was the third step tab - it's
+  // now its own always-visible panel (askSearchPanel), not part of the
+  // stepper, so this scrolls straight there instead of calling goToStep(3),
+  // which would set an active step no <section data-step="3"> matches.
+  // Existing /?step=3 links (Repository/Admin sidebars) keep working
+  // unchanged from the caller's side.
+  const target = n === 3 ? 'askSearchPanel' : 'stepper';
+  if (n !== 3) goToStep(n);
   // Instant, not smooth: this fires right at page load for the ?step=/
   // ?expand= entry points (Repository/Admin's sidebar links), where a
   // smooth-scroll animation kicked off that early is unreliable - jumping
   // straight there is also just more correct UX for "take me to X".
-  document.getElementById('stepper').scrollIntoView({ behavior: 'auto', block: 'start' });
+  document.getElementById(target).scrollIntoView({ behavior: 'auto', block: 'start' });
   return false;
 }
 
 // Data-driven on purpose: adding a future step/agent means adding one
 // entry here plus one <section class="step-panel" data-step="N"> in
 // the HTML - the stepper's rendering, navigation, and done-indicators
-// all work off this array, nothing else needs to change.
+// all work off this array, nothing else needs to change. Ask/Search used
+// to be step 3 here - it's now its own always-visible panel above the
+// summary instead (askSearchPanel), not gated behind a step tab.
 const STEPS = [
   { id: 1, label: 'Set up project' },
   { id: 2, label: 'Extract & store' },
-  { id: 3, label: 'Ask / Search' },
 ];
 let currentStep = 1;
 let stepInitialized = false;
 
 function pickDefaultStep(project) {
   if (!project) return 1;
-  const hasData = (project.meetings_count > 0 || project.documents_count > 0);
-  return hasData ? 3 : 2;
+  return 2;
 }
 
 function goToStep(n) {
@@ -1131,7 +1151,6 @@ function renderStepper() {
   const done = {
     1: !!currentProjectId,
     2: active ? (active.meetings_count > 0 || active.documents_count > 0) : false,
-    3: false,
   };
   stepper.innerHTML = STEPS.map(s => `
     <button class="step-tab ${currentStep === s.id ? 'active' : ''} ${done[s.id] ? 'done' : ''}" onclick="goToStep(${s.id})">
@@ -1139,6 +1158,14 @@ function renderStepper() {
       <span class="step-label">${s.label}</span>
     </button>
   `).join('');
+}
+
+function toggleSummaryCollapsed() {
+  const content = document.getElementById('summaryContent');
+  const caret = document.getElementById('summaryCollapseCaret');
+  const collapsed = content.style.display !== 'none';
+  content.style.display = collapsed ? 'none' : 'block';
+  caret.classList.toggle('collapsed', collapsed);
 }
 
 async function loadProjects() {
