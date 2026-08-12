@@ -33,30 +33,40 @@ MODULES = {
         "writes": ["Document"],
         "description": "Pulls emails matching the project's name or client domain.",
     },
-    "extraction-engine": {
-        "module_id": "extraction-engine",
-        "module_class": "engine",
-        "display_name": "Extraction engine",
-        "reads": ["Meeting", "Document"],
-        "writes": ["Decision", "ActionItem", "OpenQuestion"],
-        "description": "Extracts decisions, action items, and open questions via Claude.",
-    },
-    "brief-generator": {
-        "module_id": "brief-generator",
-        "module_class": "engine",
-        "display_name": "Status brief generator",
-        "reads": ["Meeting", "Document", "Decision", "ActionItem", "OpenQuestion"],
-        "writes": ["Brief"],
-        "description": "Writes a full status brief for the engagement via Claude.",
-    },
-    "contradiction-detector": {
-        "module_id": "contradiction-detector",
-        "module_class": "engine",
-        "display_name": "Contradiction detector",
-        "reads": ["Decision"],
-        "writes": ["Contradiction"],
-        "description": "Flags decisions on record that appear to disagree with each other.",
-    },
+    # extraction-engine, brief-generator, and contradiction-detector are
+    # deliberately not registered here - removed from the Step 2 module
+    # grid (and from being manually RUN-able) rather than deleted. Their
+    # runner code (extraction.py, brief.py, contradiction.py) is untouched,
+    # nothing in the database they've already written gets removed, and
+    # extraction/brief still run automatically in the background (see
+    # api_run's post-sync auto-chain and run_auto_sync_for_project in
+    # main.py) - only the manual, visible "engine" entry point is gone.
+    # Uncomment to bring any of them back as a clickable module:
+    #
+    # "extraction-engine": {
+    #     "module_id": "extraction-engine",
+    #     "module_class": "engine",
+    #     "display_name": "Extraction engine",
+    #     "reads": ["Meeting", "Document"],
+    #     "writes": ["Decision", "ActionItem", "OpenQuestion"],
+    #     "description": "Extracts decisions, action items, and open questions via Claude.",
+    # },
+    # "brief-generator": {
+    #     "module_id": "brief-generator",
+    #     "module_class": "engine",
+    #     "display_name": "Status brief generator",
+    #     "reads": ["Meeting", "Document", "Decision", "ActionItem", "OpenQuestion"],
+    #     "writes": ["Brief"],
+    #     "description": "Writes a full status brief for the engagement via Claude.",
+    # },
+    # "contradiction-detector": {
+    #     "module_id": "contradiction-detector",
+    #     "module_class": "engine",
+    #     "display_name": "Contradiction detector",
+    #     "reads": ["Decision"],
+    #     "writes": ["Contradiction"],
+    #     "description": "Flags decisions on record that appear to disagree with each other.",
+    # },
     "digest-notifier": {
         "module_id": "digest-notifier",
         "module_class": "notifier",

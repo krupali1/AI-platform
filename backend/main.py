@@ -1603,28 +1603,28 @@ def run_auto_sync_for_project(session, client):
             print(f"[auto-sync] extraction failed for project {client.id}: {e}", flush=True)
 
         if synced_any or extracted_new:
-            for step_name, step in (
-                ("contradiction-check", lambda: contradiction.run_contradiction_check(session, client, llm_config=llm_config)),
-                ("brief", lambda: brief_module.generate_brief(session, client, llm_config=llm_config)),
-            ):
-                try:
-                    step()
-                except Exception as e:
-                    print(f"[auto-sync] {step_name} failed for project {client.id}: {e}", flush=True)
+            # Contradiction detection deliberately isn't part of this
+            # automatic chain - unlike extraction/brief, nobody asked for
+            # it to run unattended; contradiction.py is untouched and
+            # still reachable manually if it's ever wired back into the
+            # module list.
+            try:
+                brief_module.generate_brief(session, client, llm_config=llm_config)
+            except Exception as e:
+                print(f"[auto-sync] brief failed for project {client.id}: {e}", flush=True)
     elif synced_any:
         # No server-wide key configured - same principle as skipping
-        # connectors above, applied here too. Each of these three either
-        # writes a demo placeholder that outranks ("latest") a real
-        # brief already on record, or (contradiction-check) wipes and
-        # regenerates its whole result set from scratch every run - an
-        # unattended cycle silently regressing real, synthesized output
-        # to a placeholder would be actively harmful, not just a no-op.
-        # Leaving existing extraction/brief/contradiction output alone
-        # is strictly safer than that; a manual RUN with a per-user key
+        # connectors above, applied here too. Each of these either writes
+        # a demo placeholder that outranks ("latest") a real brief already
+        # on record, or is simply pointless without a real model behind
+        # it - an unattended cycle silently regressing real, synthesized
+        # output to a placeholder would be actively harmful, not just a
+        # no-op. Leaving existing extraction/brief output alone is
+        # strictly safer than that; a manual RUN with a per-user key
         # still generates real output on demand.
         print(f"[auto-sync] project {client.id}: synced new content but no server-wide "
-              f"AI key configured - skipping extraction/brief/contradiction to avoid "
-              f"regressing real output to a demo placeholder", flush=True)
+              f"AI key configured - skipping extraction/brief to avoid regressing real "
+              f"output to a demo placeholder", flush=True)
 
     return synced_any
 

@@ -369,18 +369,35 @@ def run_drive(session, client):
 
         count = 0
         backfilled = 0
+        updated = 0
         for f in candidates.values():
             existing = session.query(Document).filter_by(client_id=client.id, external_id=f["id"]).first()
             if existing:
-                # Documents synced before real content-extraction covered
-                # this file's type got stuck with the old placeholder text
-                # forever, since the dedup check above would otherwise skip
-                # them on every later sync - this is the one-time repair for
-                # that, not an ongoing re-fetch of documents that already
-                # have real content.
-                if not existing.content or existing.content.startswith(_UNREAD_PLACEHOLDER_PREFIX):
+                is_placeholder = not existing.content or existing.content.startswith(_UNREAD_PLACEHOLDER_PREFIX)
+                source_modified = _parse_dt(f.get("modifiedTime"))
+                # A genuine edit since the last sync - Drive's own
+                # modifiedTime moved past what's stored. Distinct from the
+                # placeholder-repair case below: this is an ongoing check
+                # every sync, not a one-time backfill, since a document
+                # someone keeps editing should keep getting re-read.
+                genuinely_updated = (
+                    not is_placeholder and source_modified and existing.modified_at
+                    and source_modified > existing.modified_at
+                )
+                if is_placeholder or genuinely_updated:
                     existing.content = _read_drive_content(service, f)
-                    backfilled += 1
+                    existing.modified_at = source_modified or existing.modified_at
+                    # Whatever summary is on record was written against the
+                    # old content - clearing it is what makes the automatic
+                    # extraction pass (which only (re)summarizes a record
+                    # with no summary yet) actually redo it against the new
+                    # content, instead of leaving a stale summary in place
+                    # indefinitely just because *a* summary already exists.
+                    existing.synthesized_summary = None
+                    if is_placeholder:
+                        backfilled += 1
+                    else:
+                        updated += 1
                 continue
             content = _read_drive_content(service, f)
             session.add(Document(
@@ -401,12 +418,14 @@ def run_drive(session, client):
         else:
             criteria.append("no client domain set - domain matching skipped")
         backfill_note = f", backfilled content for {backfilled} previously-unreadable document(s)" if backfilled else ""
+        updated_note = f", refreshed content for {updated} updated document(s)" if updated else ""
         _log(session, client, "drive-connector", "success",
-             f"Synced {count} new document(s){backfill_note} via {cred_source} - {'; '.join(criteria)}")
-        # Counted together so a backfill-only run (nothing new, but old
-        # documents just became readable) still triggers extraction/brief
-        # regeneration downstream, same as an actual new sync would.
-        return {"synced": count + backfilled, "demo": False}
+             f"Synced {count} new document(s){backfill_note}{updated_note} via {cred_source} - {'; '.join(criteria)}")
+        # Counted together so a backfill-only or updated-only run (nothing
+        # new, but old documents just became readable or changed content)
+        # still triggers extraction/brief regeneration downstream, same as
+        # an actual new sync would.
+        return {"synced": count + backfilled + updated, "demo": False}
     except Exception as e:
         _log(session, client, "drive-connector", "error", f"Drive sync failed: {e}")
         raise
