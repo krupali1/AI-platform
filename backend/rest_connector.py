@@ -128,10 +128,16 @@ def run_rest_connector(session, client, connector):
 
 
 def _parse_dt(value):
+    """Always naive UTC - fromisoformat would otherwise return a
+    timezone-aware datetime for a "Z"-suffixed value, but a value read
+    back from the database is always naive (SQLite/SQLAlchemy's plain
+    DateTime column drops tzinfo on the round-trip), so comparing the two
+    later raises "can't compare offset-naive and offset-aware datetimes" -
+    stripped here so every caller gets a consistently comparable value."""
     if not value:
         return None
     try:
-        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
     except Exception:
         return None
 

@@ -54,13 +54,22 @@ def _normalize_domain(value):
 
 def _parse_dt(value):
     """Handles both ISO strings (Drive) and epoch-millisecond numbers
-    (Fireflies' `date` field)."""
+    (Fireflies' `date` field). Always returns a naive UTC datetime - the
+    ISO-string branch would otherwise come back timezone-aware (Drive's
+    "Z" suffix) while the epoch branch is naive, and SQLite/SQLAlchemy's
+    plain DateTime column drops tzinfo on the round-trip anyway, so a
+    value read back from the database is always naive regardless of what
+    was stored. Comparing a freshly-parsed aware value against one of
+    those DB-read values raises "can't compare offset-naive and
+    offset-aware datetimes" - stripping tzinfo here, once, at the source,
+    means every caller gets a consistently comparable value instead of
+    each comparison site having to remember to normalize it."""
     if value is None or value == "":
         return None
     try:
         if isinstance(value, (int, float)) or (isinstance(value, str) and value.replace(".", "", 1).isdigit()):
             return datetime.datetime.utcfromtimestamp(float(value) / 1000)
-        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
     except Exception:
         return None
 
