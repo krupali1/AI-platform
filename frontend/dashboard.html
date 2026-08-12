@@ -2231,7 +2231,7 @@ async function runQuery() {
     html += `<div class="results-group"><h4>${label} (${items.length})</h4>` +
       items.map(i => `<div class="result-card">${render(i)}</div>`).join('') + `</div>`;
   }
-  el.innerHTML = total ? html : '<div class="empty-note">No matches. Try running the connectors and extraction engine first.</div>';
+  el.innerHTML = total ? html : '<div class="empty-note">No matches. Try running the connectors above first.</div>';
 }
 
 function timeAgo(iso) {

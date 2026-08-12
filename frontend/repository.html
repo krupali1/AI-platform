@@ -206,9 +206,9 @@ function render() {
     const hints = {
       meetings: 'run the Fireflies or Gmail connector from the console first.',
       documents: 'run the Drive or Gmail connector from the console first.',
-      open_questions: 'run the extraction engine from the console first.',
-      briefs: 'run the status brief generator from the console first.',
-      contradictions: 'run the contradiction detector from the console first - or there simply aren\'t any right now.',
+      open_questions: 'sync a meeting or document first - open questions get pulled out automatically.',
+      briefs: 'sync a meeting or document first - a project brief gets written automatically.',
+      contradictions: 'there simply aren\'t any right now - this only appears if decisions on record genuinely disagree.',
       engine_outputs: 'create a custom agent in Step 2 and run it first.',
     };
     list.innerHTML = `<div class="empty-note">No ${currentTab.replace('_', ' ')} yet - ${hints[currentTab] || ''}</div>`;
@@ -225,7 +225,7 @@ function cardHtml(item, i, sel) {
   if (currentTab === 'meetings' || currentTab === 'documents') {
     const date = item.occurred_at || item.modified_at;
     const dateStr = date ? new Date(date + (date.endsWith('Z') ? '' : 'Z')).toLocaleDateString() : '';
-    const summary = item.synthesized_summary || '(no summary yet - run the extraction engine)';
+    const summary = item.synthesized_summary || '(summary not generated yet - happens automatically shortly after sync)';
     const fullText = currentTab === 'meetings' ? (item.transcript || item.summary || '') : (item.content || '');
     return `
       <div class="item" id="item-${i}">

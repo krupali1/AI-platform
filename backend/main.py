@@ -82,12 +82,34 @@ def get_user_llm_config(user):
     }
 
 
-def get_automation_llm_config():
+def get_automation_llm_config(client, session):
     """Same shape as get_user_llm_config, for the background auto-sync loop
-    below, which has no signed-in user to draw a preferred provider/key
-    from. Only the server-wide Anthropic fallback applies here - if that
-    isn't set, extraction/brief/contradiction-check run in demo mode, same
-    as a manual RUN click from a user with no key of their own."""
+    below, which has no signed-in user of its own to draw a preferred
+    provider/key from - but a project isn't ownerless just because nobody's
+    actively clicking RUN on it. Tries, in order:
+
+    1. Each of this project's admins' own configured key (earliest-added
+       admin first - typically whoever created the project), so a project
+       whose owner already set up their own provider/key from the header
+       gets real automatic runs without needing a second, separate
+       server-wide key on top of the one they already configured.
+    2. The server-wide Anthropic fallback, if set.
+
+    None (demo mode, same as a manual RUN with no key) only if neither
+    produces a usable config."""
+    admin_emails = [
+        m.email for m in session.query(ProjectMembership)
+        .filter_by(client_id=client.id, role="admin")
+        .order_by(ProjectMembership.created_at.asc()).all()
+    ]
+    for email in admin_emails:
+        admin_user = session.query(User).filter_by(email=email).first()
+        if not admin_user:
+            continue
+        config = get_user_llm_config(admin_user)
+        if config:
+            return config
+
     if not ANTHROPIC_SERVER_KEY:
         return None
     return {
@@ -1587,7 +1609,7 @@ def run_auto_sync_for_project(session, client):
         except Exception as e:
             print(f"[auto-sync] connector '{rc.display_name}' failed for project {client.id}: {e}", flush=True)
 
-    llm_config = get_automation_llm_config()
+    llm_config = get_automation_llm_config(client, session)
     if llm_config:
         # Extraction runs every cycle, not just ones that synced something
         # new - it already skips any record that doesn't need summarizing,

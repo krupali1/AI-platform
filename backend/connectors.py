@@ -165,13 +165,31 @@ def run_fireflies(session, client):
                     seen[t["id"]] = t
 
         count = 0
+        backfilled = 0
         for t in seen.values():
-            if session.query(Meeting).filter_by(client_id=client.id, external_id=t["id"]).first():
-                continue
             summary = t.get("summary") or {}
             transcript_text = "\n".join(
                 f"{s.get('speaker_name', '')}: {s.get('text', '')}" for s in (t.get("sentences") or [])
             )
+            summary_text = summary.get("overview") or summary.get("short_summary") or ""
+
+            existing = session.query(Meeting).filter_by(client_id=client.id, external_id=t["id"]).first()
+            if existing:
+                # A meeting synced before Fireflies finished processing it
+                # (transcription/summarization can lag behind the call
+                # ending) got stuck with an empty transcript and summary
+                # forever - the dedup check above would otherwise skip it
+                # on every later sync, even once Fireflies actually has the
+                # content ready. This is that one-time repair, same pattern
+                # as the Drive connector's placeholder backfill: only fills
+                # in what's genuinely still missing, doesn't touch a
+                # meeting that already has real content.
+                if not existing.transcript and not existing.summary and (transcript_text or summary_text):
+                    existing.transcript = transcript_text
+                    existing.summary = summary_text
+                    backfilled += 1
+                continue
+
             session.add(Meeting(
                 client_id=client.id,
                 source="fireflies",
@@ -179,7 +197,7 @@ def run_fireflies(session, client):
                 source_url=t.get("transcript_url"),
                 title=t.get("title"),
                 occurred_at=_parse_dt(t.get("date")),
-                summary=summary.get("overview") or summary.get("short_summary") or "",
+                summary=summary_text,
                 transcript=transcript_text,
                 participants=", ".join(t.get("participants") or []),
             ))
@@ -191,9 +209,14 @@ def run_fireflies(session, client):
             criteria.append(f"@{domain} participant (scanned last {DOMAIN_SCAN_LIMIT} meetings, {domain_matched} matched)")
         else:
             criteria.append("no client domain set - domain matching skipped")
+        backfill_note = f", backfilled content for {backfilled} previously-empty meeting(s)" if backfilled else ""
         _log(session, client, "fireflies-connector", "success",
-             f"Synced {count} new meeting(s) - {'; '.join(criteria)}")
-        return {"synced": count, "demo": False}
+             f"Synced {count} new meeting(s){backfill_note} - {'; '.join(criteria)}")
+        # Counted together so a backfill-only run (nothing new, but an old
+        # meeting's transcript just became available) still triggers
+        # extraction/brief regeneration downstream, same as Drive's
+        # equivalent backfill count already does.
+        return {"synced": count + backfilled, "demo": False}
     except Exception as e:
         _log(session, client, "fireflies-connector", "error", f"Fireflies sync failed: {e}")
         raise
