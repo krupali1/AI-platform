@@ -12,7 +12,7 @@ from typing import List
 from pydantic import BaseModel
 
 from database import init_db, SessionLocal
-from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, OAuthProvider, OAuthConnection, Event, User
+from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
 from manifest import MODULES
 from auth import oauth, is_email_allowed, is_admin_email
 from crypto import encrypt, decrypt
@@ -124,6 +124,7 @@ def startup():
     init_db()
     _seed_builtin_connectors()
     _migrate_scope_to_project_links()
+    _migrate_project_admins()
     asyncio.create_task(_auto_sync_loop())
 
 
@@ -155,6 +156,39 @@ def _migrate_scope_to_project_links():
             targets = all_project_ids if rc.client_id is None else [rc.client_id]
             for pid in targets:
                 session.add(RestConnectorProject(connector_id=rc.id, client_id=pid))
+        session.commit()
+    finally:
+        session.close()
+
+
+def _migrate_project_admins():
+    """One-time backfill for anyone upgrading from before per-project
+    roles existed. Team & Keys is now gated on a user's *project-level*
+    role being admin, falling back to their global role only when a
+    project has zero membership rows at all (see
+    get_effective_project_role) - without this, every existing project
+    would have zero rows the instant this shipped, and a global "member"
+    who previously had Team & Keys access (global admin/member both did)
+    would silently lose it. This grants every current global admin and
+    member an explicit "admin" membership on every project that doesn't
+    have any membership rows yet, preserving today's actual access
+    exactly. Only touches projects with zero memberships, so it's safe
+    to run on every startup - a project that already has real membership
+    rows (from this migration or from being set up fresh) is never
+    touched again, and new projects going forward only auto-add their
+    creator, not every member org-wide."""
+    session = SessionLocal()
+    try:
+        admin_and_member_emails = [
+            u.email for u in session.query(User).filter(User.role.in_(["admin", "member"])).all()
+        ]
+        if not admin_and_member_emails:
+            return
+        for client in session.query(Client).all():
+            if session.query(ProjectMembership).filter_by(client_id=client.id).first():
+                continue
+            for email in admin_and_member_emails:
+                session.add(ProjectMembership(client_id=client.id, email=email, role="admin"))
         session.commit()
     finally:
         session.close()
@@ -271,6 +305,30 @@ def require_role(*roles):
             raise HTTPException(status_code=403, detail="Not permitted for your role")
         return user
     return checker
+
+
+def get_effective_project_role(user, project_id, session):
+    """A user's role for one specific project, not their global one - see
+    ProjectMembership's docstring. A global admin is always project-admin
+    everywhere, full stop. Otherwise, this project's own membership row
+    for that email wins if one exists; a project with no membership rows
+    at all (not upgraded yet, or nobody's been explicitly added) falls
+    back to the user's global role, matching pre-per-project-role
+    behavior rather than silently locking everyone out."""
+    if user.role == "admin":
+        return "admin"
+    membership = session.query(ProjectMembership).filter_by(client_id=project_id, email=user.email).first()
+    return membership.role if membership else user.role
+
+
+def require_project_admin(user, project_id, session):
+    """Raises 403 unless this user's role for this specific project is
+    admin. Called inline (not a FastAPI Depends) since the endpoints this
+    guards already take project_id as a path param and manage their own
+    session, matching this file's existing style for project-scoped
+    credential endpoints."""
+    if get_effective_project_role(user, project_id, session) != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required for this project's Team & Keys")
 
 
 @app.get("/api/me")
@@ -413,7 +471,12 @@ def list_projects(user: User = Depends(get_current_user)):
 def current_project(request: Request, user: User = Depends(get_current_user)):
     session = SessionLocal()
     project = get_current_project(request, session)
-    out = {"id": project.id, "name": project.name} if project else None
+    out = None
+    if project:
+        out = {
+            "id": project.id, "name": project.name,
+            "my_role": get_effective_project_role(user, project.id, session),
+        }
     session.close()
     return out
 
@@ -437,6 +500,12 @@ def create_project(payload: ProjectPayload, request: Request, user: User = Depen
     session.commit()
     session.refresh(project)
     project_id = project.id
+    # The creator gets admin on their own new project - otherwise a
+    # global "member" who isn't already project-admin somewhere would
+    # create a project and immediately be locked out of its own Team &
+    # Keys section.
+    session.add(ProjectMembership(client_id=project_id, email=user.email, role="admin"))
+    session.commit()
     session.close()
     request.session["project_id"] = project_id
     return {"id": project_id, "name": name, "domain": payload.domain.strip()}
@@ -542,6 +611,7 @@ def set_fireflies_key(project_id: int, payload: CredentialPayload, user: User = 
     if not project:
         session.close()
         raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
     project.encrypted_fireflies_key = encrypt(value)
     session.commit()
     session.close()
@@ -555,6 +625,7 @@ def clear_fireflies_key(project_id: int, user: User = Depends(require_role("admi
     if not project:
         session.close()
         raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
     project.encrypted_fireflies_key = None
     session.commit()
     session.close()
@@ -571,6 +642,7 @@ def set_resend_key(project_id: int, payload: CredentialPayload, user: User = Dep
     if not project:
         session.close()
         raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
     project.encrypted_resend_key = encrypt(value)
     session.commit()
     session.close()
@@ -584,6 +656,7 @@ def clear_resend_key(project_id: int, user: User = Depends(require_role("admin",
     if not project:
         session.close()
         raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
     project.encrypted_resend_key = None
     session.commit()
     session.close()
@@ -605,6 +678,7 @@ def set_drive_credentials(project_id: int, payload: CredentialPayload, user: Use
     if not project:
         session.close()
         raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
     project.encrypted_drive_credentials = encrypt(value)
     session.commit()
     session.close()
@@ -618,6 +692,7 @@ def clear_drive_credentials(project_id: int, user: User = Depends(require_role("
     if not project:
         session.close()
         raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
     project.encrypted_drive_credentials = None
     session.commit()
     session.close()
@@ -666,9 +741,11 @@ async def drive_connect_callback(request: Request):
 async def drive_connect(project_id: int, request: Request, user: User = Depends(require_role("admin", "member"))):
     session = SessionLocal()
     project = session.query(Client).filter_by(id=project_id).first()
-    session.close()
     if not project:
+        session.close()
         raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
+    session.close()
     # Stashed server-side in the session, not trusted from the callback's
     # query params, so this can't be redirected to attach to a project
     # the person clicking wasn't actually authorized to modify.
@@ -690,10 +767,122 @@ def drive_disconnect(project_id: int, user: User = Depends(require_role("admin",
     if not project:
         session.close()
         raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
     project.drive_oauth_email = None
     project.encrypted_drive_access_token = None
     project.encrypted_drive_refresh_token = None
     project.drive_token_expiry = None
+    session.commit()
+    session.close()
+    return {"ok": True}
+
+
+# ---------- Project members (per-project roles) ----------
+
+PROJECT_ROLES = ("admin", "member", "viewer", "client")
+
+
+def _serialize_membership(m):
+    return {"id": m.id, "email": m.email, "role": m.role, "created_at": m.created_at.isoformat() if m.created_at else None}
+
+
+@app.get("/api/projects/{project_id}/members")
+def list_project_members(project_id: int, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    if not session.query(Client).filter_by(id=project_id).first():
+        session.close()
+        raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
+    members = session.query(ProjectMembership).filter_by(client_id=project_id).order_by(ProjectMembership.created_at.asc()).all()
+    out = [_serialize_membership(m) for m in members]
+    session.close()
+    return out
+
+
+class MemberPayload(BaseModel):
+    email: str
+    role: str = "member"
+
+
+@app.post("/api/projects/{project_id}/members")
+def add_project_member(project_id: int, payload: MemberPayload, user: User = Depends(require_role("admin", "member"))):
+    email = payload.email.strip().lower()
+    role = payload.role.strip().lower()
+    if not email:
+        raise HTTPException(400, "email is required")
+    if role not in PROJECT_ROLES:
+        raise HTTPException(400, f"role must be one of {', '.join(PROJECT_ROLES)}")
+    session = SessionLocal()
+    if not session.query(Client).filter_by(id=project_id).first():
+        session.close()
+        raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
+    # Adding someone already on the roster just updates their role in
+    # place, rather than erroring or creating a second row for the same
+    # email - re-adding with a different role is how you'd naturally
+    # expect to change it from this same form.
+    existing = session.query(ProjectMembership).filter_by(client_id=project_id, email=email).first()
+    if existing:
+        existing.role = role
+        session.commit()
+        out = _serialize_membership(existing)
+    else:
+        m = ProjectMembership(client_id=project_id, email=email, role=role)
+        session.add(m)
+        session.commit()
+        session.refresh(m)
+        out = _serialize_membership(m)
+    session.close()
+    return out
+
+
+class MemberRolePayload(BaseModel):
+    role: str
+
+
+@app.patch("/api/projects/{project_id}/members/{member_id}")
+def update_project_member(project_id: int, member_id: int, payload: MemberRolePayload, user: User = Depends(require_role("admin", "member"))):
+    role = payload.role.strip().lower()
+    if role not in PROJECT_ROLES:
+        raise HTTPException(400, f"role must be one of {', '.join(PROJECT_ROLES)}")
+    session = SessionLocal()
+    if not session.query(Client).filter_by(id=project_id).first():
+        session.close()
+        raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
+    member = session.query(ProjectMembership).filter_by(id=member_id, client_id=project_id).first()
+    if not member:
+        session.close()
+        raise HTTPException(404, "member not found")
+    if member.role == "admin" and role != "admin":
+        admin_count = session.query(ProjectMembership).filter_by(client_id=project_id, role="admin").count()
+        if admin_count <= 1:
+            session.close()
+            raise HTTPException(400, "Can't remove this project's last admin")
+    member.role = role
+    session.commit()
+    out = _serialize_membership(member)
+    session.close()
+    return out
+
+
+@app.delete("/api/projects/{project_id}/members/{member_id}")
+def remove_project_member(project_id: int, member_id: int, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    if not session.query(Client).filter_by(id=project_id).first():
+        session.close()
+        raise HTTPException(404, "project not found")
+    require_project_admin(user, project_id, session)
+    member = session.query(ProjectMembership).filter_by(id=member_id, client_id=project_id).first()
+    if not member:
+        session.close()
+        raise HTTPException(404, "member not found")
+    if member.role == "admin":
+        admin_count = session.query(ProjectMembership).filter_by(client_id=project_id, role="admin").count()
+        if admin_count <= 1:
+            session.close()
+            raise HTTPException(400, "Can't remove this project's last admin")
+    session.delete(member)
     session.commit()
     session.close()
     return {"ok": True}

@@ -594,6 +594,27 @@
   }
   .tp-section button.primary { border-color: var(--accent); color: var(--accent); }
   .tp-section button.danger { border-color: var(--bad); color: var(--bad); }
+  .tp-member-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  .tp-member-row {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  }
+  .tp-member-email {
+    flex: 1; font-family: var(--mono); font-size: 11.5px; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tp-member-row select, .tp-member-add select {
+    background: var(--panel-raised); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 11px; padding: 5px 6px; border-radius: 5px;
+  }
+  .tp-member-remove {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    background: transparent; border: 1px solid var(--border); border-radius: 5px;
+    width: 22px; height: 22px; line-height: 1; cursor: pointer; flex: none; padding: 0;
+  }
+  .tp-member-remove:hover { color: var(--bad); border-color: var(--bad); }
+  .tp-member-add { display: flex; gap: 6px; }
+  .tp-member-add input { flex: 1; margin-bottom: 0; }
   .drive-connect-btn {
     display: block; width: 100%; text-align: center; text-decoration: none;
     font-family: var(--mono); font-size: 11.5px; font-weight: 600;
@@ -823,11 +844,18 @@
       <div class="tp-section">
         <div class="tp-fill">
           <h4>Team members</h4>
-          <p class="tp-hint">A Fireflies meeting is pulled in if any of these emails attended - whether or not they've signed into this console.</p>
-          <input id="teamEmailsInput" type="text" placeholder="e.g. ankit@themirailabs.com, krupali@themirailabs.com" />
-        </div>
-        <div class="btn-row">
-          <button class="primary" onclick="saveTeamEmails()">Save</button>
+          <p class="tp-hint">Each person's role controls their access to this project's Team &amp; Keys section - only admins can reach it. Works whether or not they've signed into this console yet; the role applies the moment they do. Roles can be changed anytime.</p>
+          <div id="teamMembersList" class="tp-member-list"></div>
+          <div class="tp-member-add">
+            <input id="newMemberEmail" type="text" placeholder="name@example.com" />
+            <select id="newMemberRole">
+              <option value="admin">admin</option>
+              <option value="member" selected>member</option>
+              <option value="viewer">viewer</option>
+              <option value="client">client</option>
+            </select>
+            <button class="primary" onclick="addProjectMember()">Add</button>
+          </div>
         </div>
       </div>
       <div class="tp-section">
@@ -897,7 +925,7 @@
         <a class="sidebar-item sidebar-subitem" href="/?step=2" onclick="return jumpToStep(2, event)">2. Extract &amp; store</a>
         <a class="sidebar-item sidebar-subitem" href="/?step=3" onclick="return jumpToStep(3, event)">3. Ask &amp; Search</a>
       </div>
-      <button class="sidebar-item" onclick="toggleTeamPanel()">Team &amp; Keys</button>
+      <button class="sidebar-item" id="teamKeysSidebarBtn" onclick="toggleTeamPanel()" style="display:none;">Team &amp; Keys</button>
       <div class="sidebar-label">Account</div>
       <button class="sidebar-item" onclick="toggleSettings()">AI Provider</button>
       <a class="sidebar-item" href="/auth/logout">Sign out</a>
@@ -1015,6 +1043,7 @@ async function apiFetch(url, opts) {
 
 let currentRole = null;
 let currentProjectId = null;
+let currentProjectRole = null;   // this user's role for currentProjectId specifically - see get_effective_project_role in main.py; distinct from currentRole, which is global
 let allProjects = [];
 let pendingApplyProjectId = null;
 
@@ -1121,6 +1150,8 @@ async function loadProjects() {
   const current = await currentRes.json();
   allProjects = projects;
   currentProjectId = current ? current.id : null;
+  currentProjectRole = current ? current.my_role : null;
+  renderTeamKeysVisibility();
   renderProjectsTable();
 
   if (!projects.length) {
@@ -1279,7 +1310,17 @@ function renderKeywordsLine(project) {
   }
 }
 
+// Team & Keys is admin-only per this project (not the same as the global
+// admin/member/viewer/client role - see currentProjectRole and
+// get_effective_project_role in main.py). The sidebar button only shows
+// up for a project admin; this defensive check covers any UI state that
+// somehow gets out of sync (e.g. a role change mid-session).
+function renderTeamKeysVisibility() {
+  document.getElementById('teamKeysSidebarBtn').style.display = currentProjectRole === 'admin' ? 'block' : 'none';
+}
+
 function toggleTeamPanel() {
+  if (currentProjectRole !== 'admin') return;
   const overlay = document.getElementById('teamOverlay');
   const opening = !overlay.classList.contains('open');
   document.getElementById('editDomainForm').classList.remove('open');
@@ -1287,12 +1328,12 @@ function toggleTeamPanel() {
   overlay.classList.toggle('open', opening);
   if (opening) {
     const active = allProjects.find(p => p.id === currentProjectId);
-    document.getElementById('teamEmailsInput').value = (active && active.team_emails) || '';
     document.getElementById('notifyEmailInput').value = (active && active.notify_email) || '';
     renderCredStatus('firefliesStatus', active && active.has_fireflies_key);
     renderCredStatus('driveStatus', active && active.has_drive_credentials);
     renderCredStatus('resendStatus', active && active.has_resend_key);
     renderDriveOauthStatus(active);
+    loadProjectMembers();
   }
 }
 
@@ -1343,15 +1384,77 @@ function renderCredStatus(elId, isSet) {
   el.textContent = isSet ? 'Key set for this team' : 'Not set - running falls back to demo mode';
 }
 
-async function saveTeamEmails() {
+const PROJECT_ROLE_OPTIONS = ['admin', 'member', 'viewer', 'client'];
+
+function roleOptionsHtml(selected) {
+  return PROJECT_ROLE_OPTIONS.map(r =>
+    `<option value="${r}" ${r === selected ? 'selected' : ''}>${r}</option>`
+  ).join('');
+}
+
+async function loadProjectMembers() {
   if (!currentProjectId) return;
-  const team_emails = document.getElementById('teamEmailsInput').value.trim();
-  await apiFetch(`/api/projects/${currentProjectId}`, {
+  const res = await apiFetch(`/api/projects/${currentProjectId}/members`);
+  const members = await res.json();
+  const list = document.getElementById('teamMembersList');
+  if (!members.length) {
+    list.innerHTML = '<div class="tp-hint">No one added yet - just you, as this project\'s admin.</div>';
+    return;
+  }
+  list.innerHTML = members.map(m => `
+    <div class="tp-member-row">
+      <span class="tp-member-email">${m.email}</span>
+      <select onchange="updateProjectMemberRole(${m.id}, this.value)">${roleOptionsHtml(m.role)}</select>
+      <button class="tp-member-remove" onclick="removeProjectMember(${m.id})" title="Remove">✕</button>
+    </div>
+  `).join('');
+}
+
+async function addProjectMember() {
+  if (!currentProjectId) return;
+  const emailInput = document.getElementById('newMemberEmail');
+  const roleSelect = document.getElementById('newMemberRole');
+  const email = emailInput.value.trim();
+  if (!email) return;
+  const res = await apiFetch(`/api/projects/${currentProjectId}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, role: roleSelect.value }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert(body.detail || 'Could not add team member');
+    return;
+  }
+  emailInput.value = '';
+  roleSelect.value = 'member';
+  await loadProjectMembers();
+}
+
+async function updateProjectMemberRole(memberId, role) {
+  if (!currentProjectId) return;
+  const res = await apiFetch(`/api/projects/${currentProjectId}/members/${memberId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ team_emails }),
+    body: JSON.stringify({ role }),
   });
-  await loadProjects();
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert(body.detail || 'Could not update role');
+  }
+  await loadProjectMembers();
+}
+
+async function removeProjectMember(memberId) {
+  if (!currentProjectId) return;
+  if (!confirm('Remove this person from the project\'s roster?')) return;
+  const res = await apiFetch(`/api/projects/${currentProjectId}/members/${memberId}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert(body.detail || 'Could not remove team member');
+    return;
+  }
+  await loadProjectMembers();
 }
 
 async function saveFirefliesKey() {

@@ -306,3 +306,22 @@ class Event(Base):
     status = Column(String)   # success | warning | error
     message = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ProjectMembership(Base):
+    """A person's role for one specific project - keyed by email, not
+    user_id, so someone can be added to a project's roster before they've
+    ever signed in (same spirit team_emails used to work). This is what
+    lets two different people have different levels of access to the SAME
+    project, which User.role alone can't express (that's global - one
+    role for every project). A global admin (User.role == "admin") always
+    has full access regardless of what's here; see get_effective_project_role
+    in main.py. Currently the only thing this actually gates is the Team
+    & Keys section - not a full per-project rewrite of every permission
+    check in the app."""
+    __tablename__ = "project_memberships"
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    email = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="member")   # "admin" | "member" | "viewer" | "client"
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
