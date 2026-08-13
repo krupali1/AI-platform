@@ -86,7 +86,18 @@ def _gemini(api_key, model, prompt, max_tokens):
         },
         timeout=60,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError:
+        # Gemini takes the API key as a query param rather than a header,
+        # so the default HTTPError message (which includes the full
+        # request URL) would leak it into the Event log and error toasts -
+        # both visible to any project member, not just admins. Raised
+        # fresh here, from the response status/body only, never the URL.
+        if resp.status_code == 429:
+            raise RuntimeError("Gemini rate-limited this request (429) - too many calls in a short window. Wait a bit and try again.") from None
+        detail = (resp.text or "")[:300]
+        raise RuntimeError(f"Gemini API error ({resp.status_code}): {detail}") from None
     body = resp.json()
     candidates = body.get("candidates") or []
     if not candidates:
