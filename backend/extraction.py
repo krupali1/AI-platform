@@ -89,7 +89,7 @@ def run_extraction(session, client, llm_config=None):
     already_facts |= {(a.source_type, a.source_id) for a in session.query(ActionItem).filter_by(client_id=client.id).all()}
     already_facts |= {(q.source_type, q.source_id) for q in session.query(OpenQuestion).filter_by(client_id=client.id).all()}
 
-    new_summaries, new_decisions, new_actions, new_questions = 0, 0, 0, 0
+    new_summaries, new_decisions, new_actions, new_questions, failed = 0, 0, 0, 0, 0
     for source_type, obj, content in sources:
         if not content:
             continue
@@ -107,7 +107,19 @@ def run_extraction(session, client, llm_config=None):
         if not needs_summary and not needs_facts:
             continue  # already fully processed - skip the API call entirely
 
-        result = _extract(content, llm_config)
+        try:
+            result = _extract(content, llm_config)
+        except Exception as e:
+            # Isolated to this one record so a single bad response (or a
+            # broken key/model affecting every record) doesn't stop the
+            # rest of the batch from being attempted - but logged as a
+            # real error, not silently swallowed, and the record is left
+            # exactly as it was so it stays eligible for retry next run
+            # instead of quietly "succeeding" with a blank summary.
+            failed += 1
+            _log(session, client, "extraction-engine", "error",
+                 f"Failed to summarize {source_type.lower()} \"{getattr(obj, 'title', obj.id)}\": {e}")
+            continue
 
         if needs_summary:
             obj.synthesized_summary = result.get("summary", "")
@@ -133,27 +145,34 @@ def run_extraction(session, client, llm_config=None):
 
     session.commit()
     mode = f"live, {llm_config['provider']}" if llm_config else "demo"
-    _log(session, client, "extraction-engine", "success",
+    status = "warning" if failed else "success"
+    failed_note = f", {failed} failed - see errors above" if failed else ""
+    _log(session, client, "extraction-engine", status,
          f"Summarized {new_summaries} record(s), extracted {new_decisions} decision(s), "
-         f"{new_actions} action item(s), {new_questions} open question(s) ({mode})")
-    return {"summaries": new_summaries, "decisions": new_decisions, "action_items": new_actions, "open_questions": new_questions}
+         f"{new_actions} action item(s), {new_questions} open question(s){failed_note} ({mode})")
+    return {"summaries": new_summaries, "decisions": new_decisions, "action_items": new_actions, "open_questions": new_questions, "failed": failed}
 
 
 def _extract(content, llm_config=None):
     if llm_config:
-        try:
-            import llm_client
-            text = llm_client.complete(
-                llm_config["provider"], llm_config["api_key"], llm_config["model"],
-                EXTRACTION_PROMPT.format(content=content[:6000]), max_tokens=1200,
-                endpoint_url=llm_config.get("endpoint_url"),
-            )
-            text = text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:]
-            return json.loads(text)
-        except Exception:
-            return {"summary": "", "decisions": [], "action_items": [], "open_questions": []}
+        # No try/except here on purpose - a failure (bad key, wrong model
+        # name, a non-JSON response, a rate limit) needs to reach
+        # run_extraction()'s caller so it gets logged as a real error and
+        # the record stays eligible for retry, rather than silently
+        # writing an empty summary that reads as "done" while never
+        # actually producing anything - which is what used to happen
+        # here, with zero visibility into why a record never got a
+        # summary no matter how many times it was re-synced.
+        import llm_client
+        text = llm_client.complete(
+            llm_config["provider"], llm_config["api_key"], llm_config["model"],
+            EXTRACTION_PROMPT.format(content=content[:6000]), max_tokens=1200,
+            endpoint_url=llm_config.get("endpoint_url"),
+        )
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        return json.loads(text)
     return _demo_extract(content)
 
 
