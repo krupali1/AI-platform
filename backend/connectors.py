@@ -29,12 +29,25 @@ from crypto import encrypt, decrypt
 
 FIREFLIES_ENDPOINT = "https://api.fireflies.ai/graphql"
 
-# How many "recent" candidates to scan for the domain-matching rule,
-# since neither API can filter by domain directly - see module docstring.
-# Fireflies' transcripts query caps `limit` at 50 - asking for more fails
-# the whole call with a generic "Invalid argument(s) were provided", not
-# a clamped result, so this can't just be turned up for wider scans.
+# How many "recent" candidates to scan per page for the domain-matching
+# rule, since neither API can filter by domain directly - see module
+# docstring. Fireflies' transcripts query caps `limit` at 50 - asking for
+# more fails the whole call with a generic "Invalid argument(s) were
+# provided", not a clamped result, so a single page can't just be turned
+# up for wider scans; DOMAIN_SCAN_MAX_PAGES below is what actually widens
+# the scan, by paging through multiple 50-item requests instead.
 DOMAIN_SCAN_LIMIT = 50
+
+# The account-wide "most recent 50 meetings" this scan used to be capped
+# to is a real trap: Fireflies is one account shared across every client
+# Mirai Labs runs, not one per project, so a single page of 50 gets
+# exhausted by unrelated meetings for OTHER clients within days - a real
+# meeting for THIS project silently and permanently falls out of the scan
+# window even though it's genuinely still relevant, no matter how many
+# times the connector re-runs. Paging further back (bounded by both a
+# page count and fromDate below, so this doesn't become an unbounded
+# full-account scan on every sync) is what actually fixes that.
+DOMAIN_SCAN_MAX_PAGES = 10
 
 
 def _log(session, client, module_id, status, message):
@@ -96,8 +109,8 @@ query GetTranscripts($keyword: String, $scope: String, $participants: [String!],
 # recent meetings unfiltered, so the domain check below can run against
 # their real participant lists.
 FIREFLIES_RECENT_QUERY = """
-query GetRecentTranscripts($limit: Int) {
-  transcripts(limit: $limit) {
+query GetRecentTranscripts($limit: Int, $skip: Int, $fromDate: DateTime) {
+  transcripts(limit: $limit, skip: $skip, fromDate: $fromDate) {
     id
     title
     date
@@ -163,15 +176,32 @@ def run_fireflies(session, client):
 
         # Rule 2: anyone at the client domain as a participant - no API
         # filter for this exists, so scan recent meetings and check
-        # participant emails in code.
+        # participant emails in code. Paged rather than a single 50-item
+        # call, and bounded with fromDate to this project's own creation
+        # date - together that's what actually reaches a real meeting from
+        # weeks ago instead of only ever seeing the most recent 50 across
+        # the whole (multi-client) Fireflies account. Stops early the
+        # moment a page comes back short or empty, so an account with few
+        # meetings doesn't pay for all DOMAIN_SCAN_MAX_PAGES calls anyway.
         domain_matched = 0
+        total_scanned = 0
         if domain:
-            for t in _run_query(FIREFLIES_RECENT_QUERY, {"limit": DOMAIN_SCAN_LIMIT}):
-                participants = t.get("participants") or []
-                if any(p.lower().endswith("@" + domain) for p in participants):
-                    if t["id"] not in seen:
-                        domain_matched += 1
-                    seen[t["id"]] = t
+            from_date = client.created_at.isoformat() + "Z" if client.created_at else None
+            skip = 0
+            for _ in range(DOMAIN_SCAN_MAX_PAGES):
+                page = _run_query(FIREFLIES_RECENT_QUERY, {"limit": DOMAIN_SCAN_LIMIT, "skip": skip, "fromDate": from_date})
+                total_scanned += len(page)
+                if not page:
+                    break
+                for t in page:
+                    participants = t.get("participants") or []
+                    if any(p.lower().endswith("@" + domain) for p in participants):
+                        if t["id"] not in seen:
+                            domain_matched += 1
+                        seen[t["id"]] = t
+                if len(page) < DOMAIN_SCAN_LIMIT:
+                    break
+                skip += DOMAIN_SCAN_LIMIT
 
         count = 0
         backfilled = 0
@@ -215,7 +245,7 @@ def run_fireflies(session, client):
 
         criteria = [f"title contains \"{client.name}\""]
         if domain:
-            criteria.append(f"@{domain} participant (scanned last {DOMAIN_SCAN_LIMIT} meetings, {domain_matched} matched)")
+            criteria.append(f"@{domain} participant (scanned {total_scanned} meeting(s) since project creation, {domain_matched} matched)")
         else:
             criteria.append("no client domain set - domain matching skipped")
         backfill_note = f", backfilled content for {backfilled} previously-empty meeting(s)" if backfilled else ""
