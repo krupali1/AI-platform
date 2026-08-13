@@ -260,8 +260,16 @@ function cardHtml(item, i, sel) {
   if (currentTab === 'meetings' || currentTab === 'documents') {
     const date = item.occurred_at || item.modified_at;
     const dateStr = date ? new Date(date + (date.endsWith('Z') ? '' : 'Z')).toLocaleDateString() : '';
-    const summary = item.synthesized_summary || '(summary not generated yet - happens automatically shortly after sync)';
     const fullText = currentTab === 'meetings' ? (item.transcript || item.summary || '') : (item.content || '');
+    // Fathom (and similar sources) pull in content that's already
+    // summary-shaped - the source did its own summarization before we
+    // ever saw it - so "not generated yet" was misleading whenever real
+    // content already exists: there's something to show, just not our
+    // own synthesized_summary specifically. Falls back to a preview of
+    // the raw content itself, and only shows the placeholder when
+    // there's genuinely nothing pulled in yet.
+    const rawPreview = fullText ? escapeHtml(fullText.slice(0, 180)) + (fullText.length > 180 ? '…' : '') : '';
+    const summary = item.synthesized_summary || rawPreview || '(summary not generated yet - happens automatically shortly after sync)';
     return `
       <div class="item" id="item-${i}">
         ${checkbox}
