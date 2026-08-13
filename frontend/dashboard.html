@@ -263,9 +263,10 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
     box-shadow: var(--shadow-md); width: 100%; max-width: 480px;
   }
-  .agent-form input[type="text"], .agent-form textarea {
+  .agent-form input[type="text"], .agent-form input[type="password"], .agent-form select, .agent-form textarea {
     width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
     color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 10px; border-radius: 6px;
+    box-sizing: border-box;
   }
   .agent-form textarea { min-height: 70px; resize: vertical; }
   .agent-reads, .agent-scope { display: flex; flex-wrap: wrap; gap: 10px; }
