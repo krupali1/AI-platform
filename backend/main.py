@@ -1122,7 +1122,7 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             "module_class": "custom-connector",
             "display_name": rc.display_name,
             "reads": [],
-            "writes": ["Document"],
+            "writes": ["Meeting" if rc.content_type == "meeting" else "Document"],
             "description": rc.description or "",
             "oauth_provider_slug": oauth_provider_slug,
             "oauth_provider_name": oauth_provider_name,
@@ -1251,6 +1251,7 @@ class RestConnectorPayload(BaseModel):
     field_content: str = ""
     field_url: str = ""
     field_date: str = ""
+    content_type: str = "document"   # "document" | "meeting" - which table synced records land in
     project_ids: list[int] = []   # which projects this applies to - empty is valid (nothing to link to yet)
 
 
@@ -1266,6 +1267,7 @@ def list_rest_connectors(user: User = Depends(get_current_user)):
             "search_url_template": r.search_url_template, "auth_style": r.auth_style,
             "results_path": r.results_path, "field_id": r.field_id, "field_title": r.field_title,
             "field_content": r.field_content, "field_url": r.field_url, "field_date": r.field_date,
+            "content_type": r.content_type or "document",
             "project_ids": [l.client_id for l in links],
         })
     session.close()
@@ -1281,6 +1283,8 @@ def create_rest_connector(payload: RestConnectorPayload, request: Request, user:
         raise HTTPException(400, "auth_style must be 'header', 'google_oauth', or 'oauth_provider'")
     if payload.auth_style == "oauth_provider" and not payload.oauth_provider_id:
         raise HTTPException(400, "oauth_provider_id is required when auth_style is 'oauth_provider'")
+    if payload.content_type not in ("document", "meeting"):
+        raise HTTPException(400, "content_type must be 'document' or 'meeting'")
     if "{query}" not in payload.search_url_template and "{domain}" not in payload.search_url_template:
         raise HTTPException(400, "search_url_template should include {query} and/or {domain} - otherwise every project would fetch the same thing")
     if not payload.results_path:
@@ -1317,6 +1321,7 @@ def create_rest_connector(payload: RestConnectorPayload, request: Request, user:
         field_content=payload.field_content.strip(),
         field_url=payload.field_url.strip(),
         field_date=payload.field_date.strip(),
+        content_type=payload.content_type,
         created_by_id=user.id,
     )
     session.add(rc)

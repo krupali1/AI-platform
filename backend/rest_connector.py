@@ -28,7 +28,7 @@ import datetime
 import urllib.parse
 import requests
 
-from models import Document, RestConnectorCredential, Event
+from models import Document, Meeting, RestConnectorCredential, Event
 from crypto import decrypt
 
 
@@ -103,13 +103,23 @@ def run_rest_connector(session, client, connector):
         if not isinstance(results, list):
             raise RuntimeError(f"results_path '{connector.results_path}' did not point at a list in the response")
 
+        # "meeting" content_type routes into the Meeting table (shows up
+        # under Repository's Meetings tab, reads via transcript-or-summary
+        # same as Fireflies) instead of Document - lets a connector like
+        # Fathom, which pulls meeting recaps rather than files, land in
+        # the tab that actually matches what it is.
+        is_meeting = connector.content_type == "meeting"
+        model = Meeting if is_meeting else Document
+        content_field = "summary" if is_meeting else "content"
+        date_field = "occurred_at" if is_meeting else "modified_at"
+
         count = 0
         backfilled = 0
         for item in results:
             external_id = str(_get_path(item, connector.field_id) or hash(str(item)))
             content = _get_path(item, connector.field_content) or ""
 
-            existing = session.query(Document).filter_by(client_id=client.id, external_id=external_id).first()
+            existing = session.query(model).filter_by(client_id=client.id, external_id=external_id).first()
             if existing:
                 # Same fix as the Fireflies/Drive connectors: a record
                 # synced before the source finished generating its content
@@ -124,21 +134,20 @@ def run_rest_connector(session, client, connector):
                 # has real content - a field genuinely, permanently empty
                 # by design (e.g. a calendar event with no description)
                 # just gets harmlessly re-checked next sync, not rewritten.
-                if not existing.content and content:
-                    existing.content = content
+                if not getattr(existing, content_field) and content:
+                    setattr(existing, content_field, content)
                     existing.synthesized_summary = None
                     backfilled += 1
                 continue
 
             date_raw = _get_path(item, connector.field_date)
-            session.add(Document(
+            session.add(model(
                 client_id=client.id,
                 source=connector.display_name.lower(),
                 external_id=external_id,
                 source_url=_get_path(item, connector.field_url),
                 title=_get_path(item, connector.field_title) or "(untitled)",
-                content=content,
-                modified_at=_parse_dt(date_raw),
+                **{content_field: content, date_field: _parse_dt(date_raw)},
             ))
             count += 1
         session.commit()
@@ -172,16 +181,22 @@ def _parse_dt(value):
 
 
 def _demo(session, client, connector, reason):
+    is_meeting = connector.content_type == "meeting"
+    model = Meeting if is_meeting else Document
+    content_field = "summary" if is_meeting else "content"
+    date_field = "occurred_at" if is_meeting else "modified_at"
     external_id = f"demo-{connector.module_id}-{client.id}-1"
-    if not session.query(Document).filter_by(client_id=client.id, external_id=external_id).first():
-        session.add(Document(
+    if not session.query(model).filter_by(client_id=client.id, external_id=external_id).first():
+        session.add(model(
             client_id=client.id,
             source=f"{connector.display_name.lower()} (demo)",
             external_id=external_id,
             source_url=None,
             title=f"{client.name} - sample record via {connector.display_name}",
-            content=f"This is a placeholder record showing what {connector.display_name} would pull in for {client.name}.",
-            modified_at=datetime.datetime.utcnow(),
+            **{
+                content_field: f"This is a placeholder record showing what {connector.display_name} would pull in for {client.name}.",
+                date_field: datetime.datetime.utcnow(),
+            },
         ))
         session.commit()
     _log(session, client, connector.module_id, "success", f"Demo mode - generated 1 sample record ({reason}).")

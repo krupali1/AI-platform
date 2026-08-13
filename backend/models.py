@@ -235,6 +235,7 @@ class RestConnector(Base):
     field_content = Column(String)
     field_url = Column(String)
     field_date = Column(String)
+    content_type = Column(String, default="document")   # "document" | "meeting" - which table synced records land in
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 

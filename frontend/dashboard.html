@@ -786,6 +786,11 @@
     <p class="tp-hint" style="margin:-2px 0 4px;">Available everywhere - pick which project it applies to below, or make it available to every project.</p>
     <input id="connName" type="text" placeholder="Connector name (e.g. Slack)" />
     <input id="connDescription" type="text" placeholder="One-line description" />
+    <span class="agent-reads-label">What does this pull in?</span>
+    <div class="agent-scope">
+      <label><input type="radio" name="connContentType" value="document" checked /> Documents (files, messages, pages)</label>
+      <label><input type="radio" name="connContentType" value="meeting" /> Meetings (calls, recaps, transcripts)</label>
+    </div>
     <div class="agent-scope">
       <label><input type="radio" name="connAuth" value="header" checked onchange="toggleConnAuthFields()" /> Static API key</label>
       <label><input type="radio" name="connAuth" value="google_oauth" onchange="toggleConnAuthFields()" /> Connected Google account</label>
@@ -2166,6 +2171,7 @@ function toggleConnAdvanced() {
 async function createConnector() {
   const display_name = document.getElementById('connName').value.trim();
   const description = document.getElementById('connDescription').value.trim();
+  const content_type = document.querySelector('input[name="connContentType"]:checked').value;
   const search_url_template = document.getElementById('connUrl').value.trim();
   const auth_style = document.querySelector('input[name="connAuth"]:checked').value;
   const auth_header_name = document.getElementById('connHeaderName').value.trim();
@@ -2193,7 +2199,7 @@ async function createConnector() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      display_name, description, search_url_template, auth_style, auth_header_name, auth_value_prefix,
+      display_name, description, content_type, search_url_template, auth_style, auth_header_name, auth_value_prefix,
       oauth_provider_id, results_path, field_id, field_title, field_content, field_url, field_date, project_ids,
     }),
   });
@@ -2204,6 +2210,7 @@ async function createConnector() {
   }
   ['connName', 'connDescription', 'connUrl', 'connResultsPath', 'connFieldId', 'connFieldTitle', 'connFieldContent', 'connFieldUrl', 'connFieldDate']
     .forEach(id => { document.getElementById(id).value = ''; });
+  document.querySelector('input[name="connContentType"][value="document"]').checked = true;
   document.getElementById('newConnectorOverlay').classList.remove('open');
   await fetchModules();
 }
