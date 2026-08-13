@@ -27,14 +27,45 @@ months. What ships as a *default suggestion* when someone first picks
 a provider is a separate, much smaller concern, handled in main.py's
 provider-switch endpoint, not here.
 """
+import time
+import urllib.parse
 import requests
 
 DEFAULT_MAX_TOKENS = 1500
+
+# A short, bounded retry for rate limits specifically - not every kind
+# of failure. A burst of connector runs (each triggering an extraction
+# call) commonly trips a provider's free-tier RPM limit; retrying a few
+# seconds later usually succeeds without the user needing to notice or
+# re-click anything. Kept short since this runs inline in a request a
+# user might be waiting on, not a background job - worst case adds
+# well under 10s before giving up and surfacing the error as before.
+RATE_LIMIT_RETRY_DELAYS = [2, 5]  # seconds to wait before each retry
+
+
+class RateLimitError(Exception):
+    """Raised by any provider function specifically for a 429 - kept
+    distinct from other failures so complete() only retries this case.
+    Retrying a bad API key or a malformed request would just waste
+    time reproducing the same error."""
+    pass
 
 
 def complete(provider, api_key, model, prompt, max_tokens=DEFAULT_MAX_TOKENS, endpoint_url=None):
     if not api_key or not model:
         raise ValueError("complete() requires both an api_key and a model - callers should check for a configured key before reaching here")
+
+    attempts = len(RATE_LIMIT_RETRY_DELAYS) + 1
+    for attempt in range(attempts):
+        try:
+            return _dispatch(provider, api_key, model, prompt, max_tokens, endpoint_url)
+        except RateLimitError as e:
+            if attempt == attempts - 1:
+                raise RateLimitError(f"{e} (already retried {attempts - 1}x)") from None
+            time.sleep(RATE_LIMIT_RETRY_DELAYS[attempt])
+
+
+def _dispatch(provider, api_key, model, prompt, max_tokens, endpoint_url):
     if provider == "anthropic":
         return _anthropic(api_key, model, prompt, max_tokens)
     elif provider == "openai":
@@ -52,11 +83,14 @@ def complete(provider, api_key, model, prompt, max_tokens=DEFAULT_MAX_TOKENS, en
 def _anthropic(api_key, model, prompt, max_tokens):
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
-    msg = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        msg = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic.RateLimitError as e:
+        raise RateLimitError("Anthropic rate-limited this request (429) - too many calls in a short window.") from e
     return "".join(getattr(b, "text", "") for b in msg.content).strip()
 
 
@@ -71,6 +105,9 @@ def _openai_compatible(endpoint_url, api_key, model, prompt, max_tokens):
         },
         timeout=60,
     )
+    if resp.status_code == 429:
+        host = urllib.parse.urlparse(endpoint_url).netloc or endpoint_url
+        raise RateLimitError(f"{host} rate-limited this request (429) - too many calls in a short window.")
     resp.raise_for_status()
     body = resp.json()
     return body["choices"][0]["message"]["content"].strip()
@@ -86,6 +123,10 @@ def _gemini(api_key, model, prompt, max_tokens):
         },
         timeout=60,
     )
+    if resp.status_code == 429:
+        # Checked before raise_for_status() specifically so this becomes
+        # a RateLimitError (retryable) rather than the generic path below.
+        raise RateLimitError("Gemini rate-limited this request (429) - too many calls in a short window.")
     try:
         resp.raise_for_status()
     except requests.exceptions.HTTPError:
@@ -94,8 +135,6 @@ def _gemini(api_key, model, prompt, max_tokens):
         # request URL) would leak it into the Event log and error toasts -
         # both visible to any project member, not just admins. Raised
         # fresh here, from the response status/body only, never the URL.
-        if resp.status_code == 429:
-            raise RuntimeError("Gemini rate-limited this request (429) - too many calls in a short window. Wait a bit and try again.") from None
         detail = (resp.text or "")[:300]
         raise RuntimeError(f"Gemini API error ({resp.status_code}): {detail}") from None
     body = resp.json()
