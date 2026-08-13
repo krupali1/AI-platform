@@ -289,14 +289,6 @@
     background: var(--panel-raised); border: 1px solid var(--border); border-radius: 6px;
     padding: 6px 9px; margin-top: 8px;
   }
-  .module-config-note {
-    font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
-    margin-top: 8px; line-height: 1.6; word-break: break-all;
-  }
-  .module-config-note code {
-    background: var(--panel-raised); border: 1px solid var(--border); border-radius: 4px;
-    padding: 1px 4px; color: var(--text);
-  }
   .tp-connector-row {
     border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px;
   }
@@ -2053,12 +2045,6 @@ async function fetchModules() {
           ${m.writes.map(w => `<span class="tag">writes ${w}</span>`).join('')}
         </div>
         <div class="module-meta">${m.last_run ? 'last run ' + timeAgo(m.last_run) : 'never run'}</div>
-        ${m.module_class === 'custom-connector' ? `
-          <div class="module-config-note">
-            ${m.auth_style === 'header' ? `Auth header: <code>${escapeHtml(m.auth_header_name || '')}</code><br>` : ''}
-            URL: <code>${escapeHtml(m.search_url_template || '')}</code>
-          </div>
-        ` : ''}
       </div>
       ${m.needs_credential ? `
         <div class="module-cred-note">Needs a key - set in Team &amp; Keys</div>

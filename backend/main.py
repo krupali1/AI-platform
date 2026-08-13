@@ -1129,8 +1129,6 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             "custom": True,
             "connector_id": rc.id,
             "auth_style": rc.auth_style,
-            "auth_header_name": rc.auth_header_name,
-            "search_url_template": rc.search_url_template,
             "needs_credential": needs_credential,
             "last_status": last_event.status if last_event else None,
             "last_run": last_event.created_at.isoformat() if last_event else None,
