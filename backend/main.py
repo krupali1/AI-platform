@@ -1255,6 +1255,38 @@ class RestConnectorPayload(BaseModel):
     project_ids: list[int] = []   # which projects this applies to - empty is valid (nothing to link to yet)
 
 
+class ConnectorDetectPayload(BaseModel):
+    search_url_template: str
+    auth_style: str = "header"
+    auth_header_name: str = "Authorization"
+    auth_value_prefix: str = ""
+    oauth_provider_id: Optional[int] = None
+    connector_id: Optional[int] = None   # falls back to this connector's saved credential when test_key isn't given
+    test_key: Optional[str] = None       # one-off value for this test only - never persisted
+
+
+@app.post("/api/rest-connectors/detect-fields")
+def detect_connector_fields(payload: ConnectorDetectPayload, request: Request, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    project = get_current_project(request, session)
+    if not project:
+        session.close()
+        raise HTTPException(400, "No project selected")
+    try:
+        result = rest_connector.detect_fields(
+            session, project, payload.auth_style, payload.auth_header_name, payload.auth_value_prefix,
+            payload.oauth_provider_id, payload.search_url_template, payload.connector_id, payload.test_key,
+        )
+    except ValueError as e:
+        session.close()
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        session.close()
+        raise HTTPException(400, f"Test request failed: {e}")
+    session.close()
+    return result
+
+
 @app.get("/api/rest-connectors")
 def list_rest_connectors(user: User = Depends(get_current_user)):
     session = SessionLocal()

@@ -24,12 +24,24 @@ provider table - not this), and GraphQL-shaped APIs like Fireflies,
 which don't fit a REST field-mapping model at all.
 """
 import os
+import re
 import datetime
 import urllib.parse
 import requests
 
 from models import Document, Meeting, RestConnectorCredential, Event
 from crypto import decrypt
+
+# Used only by detect_fields()'s best-effort field-name guessing - order
+# matters within each list (checked top to bottom), and a field already
+# claimed by an earlier guess is never reused for a later one, so e.g.
+# a single "summary" field doesn't get assigned to both title and
+# content just because it matches both patterns.
+_ID_PATTERNS = [r"^id$", r"_id$", r"^uuid$"]
+_TITLE_PATTERNS = [r"^title$", r"^name$", r"^subject$", r"_title$", r"summary$"]
+_CONTENT_PATTERNS = [r"content", r"description", r"body", r"text", r"summary"]
+_URL_PATTERNS = [r"url$", r"link$", r"href$"]
+_DATE_PATTERNS = [r"date", r"_at$", r"time"]
 
 
 def _log(session, client, module_id, status, message):
@@ -57,6 +69,132 @@ def _build_url(template, project_name, domain):
     query = urllib.parse.quote(project_name or "")
     domain_q = urllib.parse.quote(domain or "")
     return template.replace("{query}", query).replace("{domain}", domain_q)
+
+
+def find_results_array(body, prefix="", depth=0, max_depth=2):
+    """Locates the list of records in an arbitrary API response for
+    detect_fields() - checks the current level's keys for a list-of-dicts
+    before recursing into nested objects, so a top-level "items" or
+    "results" array is found before anything buried deeper, matching how
+    most REST APIs actually shape a list response (Fathom's top-level
+    "items", a hypothetical {"data": {"results": [...]}}, etc.)."""
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        return prefix, body
+    if not isinstance(body, dict) or depth > max_depth:
+        return None, None
+    for key, value in body.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            return path, value
+    for key, value in body.items():
+        if isinstance(value, dict):
+            path = f"{prefix}.{key}" if prefix else key
+            found_path, found_list = find_results_array(value, path, depth + 1, max_depth)
+            if found_path:
+                return found_path, found_list
+    return None, None
+
+
+def _flatten_item(obj, prefix="", depth=0, max_depth=2):
+    """Dotted-path scalar fields only, up to max_depth nested dicts -
+    enough to catch a shape like Fathom's default_summary.markdown_formatted
+    without wandering arbitrarily deep into unrelated nested objects."""
+    out = {}
+    if not isinstance(obj, dict) or depth > max_depth:
+        return out
+    for key, value in obj.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            out[path] = value
+        elif isinstance(value, dict):
+            out.update(_flatten_item(value, path, depth + 1, max_depth))
+    return out
+
+
+def _match_first(patterns, keys_lower_to_orig, used):
+    for pattern in patterns:
+        for lower, orig in keys_lower_to_orig.items():
+            if orig in used:
+                continue
+            if re.search(pattern, lower):
+                return orig
+    return None
+
+
+def suggest_field_mapping(item):
+    """Best-effort guess at which field is which, from the field NAMES
+    only - there's no way to know a field means "title" without some
+    signal, and names are the only one an arbitrary REST API gives us.
+    Meant as a starting point to review and correct, not a guarantee -
+    the caller also gets the raw sample item back alongside this, so a
+    wrong guess is obvious and easy to fix by hand."""
+    flat = _flatten_item(item)
+    keys_lower = {k.lower(): k for k in flat}
+    used = set()
+    result = {}
+    for field_name, patterns in (
+        ("field_id", _ID_PATTERNS), ("field_title", _TITLE_PATTERNS),
+        ("field_content", _CONTENT_PATTERNS), ("field_url", _URL_PATTERNS),
+        ("field_date", _DATE_PATTERNS),
+    ):
+        match = _match_first(patterns, keys_lower, used)
+        if match:
+            used.add(match)
+        result[field_name] = match or ""
+    return result
+
+
+def detect_fields(session, client, auth_style, auth_header_name, auth_value_prefix,
+                   oauth_provider_id, search_url_template, connector_id=None, test_key=None):
+    """Live test-fetch behind the "Test & detect fields" button - resolves
+    auth the same way run_rest_connector does, but from raw parameters
+    rather than a saved RestConnector row (works before a connector's
+    first save, using a one-off key that's never persisted), and returns
+    a best-guess field mapping from the real response instead of writing
+    any records. Raises ValueError for anything the caller should show
+    as-is (missing credential, bad auth_style); a request/HTTP failure
+    propagates as whatever requests itself raises."""
+    if auth_style == "header":
+        value = test_key
+        if not value and connector_id:
+            cred = session.query(RestConnectorCredential).filter_by(connector_id=connector_id, client_id=client.id).first()
+            value = decrypt(cred.encrypted_value) if cred else None
+        if not value:
+            raise ValueError("Paste an API key to test with, or save one in Team & Keys first")
+        auth_header = {auth_header_name or "Authorization": f"{auth_value_prefix}{value}"}
+    elif auth_style == "google_oauth":
+        from connectors import _drive_oauth_credentials
+        creds = _drive_oauth_credentials(session, client)
+        if not creds:
+            raise ValueError("Connect a Google account for this project first (Team & Keys)")
+        auth_header = {"Authorization": f"Bearer {creds.token}"}
+    elif auth_style == "oauth_provider":
+        from models import OAuthProvider, OAuthConnection
+        import oauth_generic
+        if not oauth_provider_id:
+            raise ValueError("Pick an OAuth provider first")
+        provider = session.query(OAuthProvider).filter_by(id=oauth_provider_id).first()
+        connection = session.query(OAuthConnection).filter_by(
+            provider_id=oauth_provider_id, client_id=client.id
+        ).first() if provider else None
+        if not provider or not connection:
+            raise ValueError(f"Connect {provider.name if provider else 'this provider'} for this project first (Team & Keys)")
+        token = oauth_generic.get_valid_access_token(session, connection, provider)
+        auth_header = {"Authorization": f"Bearer {token}"}
+    else:
+        raise ValueError("auth_style must be 'header', 'google_oauth', or 'oauth_provider'")
+
+    url = _build_url(search_url_template, client.name, client.domain)
+    resp = requests.get(url, headers=auth_header, timeout=15)
+    resp.raise_for_status()
+    body = resp.json()
+
+    results_path, items = find_results_array(body)
+    if not items:
+        return {"results_path": results_path, "sample_item": None, "suggested_fields": None}
+
+    sample = items[0]
+    return {"results_path": results_path, "sample_item": sample, "suggested_fields": suggest_field_mapping(sample)}
 
 
 def run_rest_connector(session, client, connector):
