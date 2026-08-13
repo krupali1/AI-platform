@@ -198,6 +198,19 @@ async function apiFetch(url, opts) {
   return res;
 }
 
+// FastAPI/Pydantic validation errors (422) send `detail` as a list of
+// {msg, loc, ...} objects, not a string - without this, `body.detail ||
+// fallback` renders a validation error as the literal "[object Object]".
+function formatApiError(body, fallback) {
+  const detail = body && body.detail;
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(e => (e && e.msg) ? `${(e.loc || []).slice(-1)[0] || ''}: ${e.msg}`.trim() : String(e)).join('; ') || fallback;
+  }
+  return fallback;
+}
+
 const TAB_IDS = ['meetings', 'documents', 'open_questions', 'briefs', 'contradictions', 'engine_outputs'];
 let currentTab = 'meetings';
 let cache = { meetings: null, documents: null, open_questions: null, briefs: null, contradictions: null, engine_outputs: null };
@@ -371,7 +384,7 @@ async function deleteSelected() {
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(body.detail || 'Could not delete');
+    alert(formatApiError(body, 'Could not delete'));
     return;
   }
   selected[currentTab] = new Set();
@@ -391,7 +404,7 @@ async function deleteAll() {
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(body.detail || 'Could not delete');
+    alert(formatApiError(body, 'Could not delete'));
     return;
   }
   selected[currentTab] = new Set();
@@ -403,7 +416,7 @@ async function deleteItem(id) {
   const res = await apiFetch(`/api/records/${currentTab}/${id}`, { method: 'DELETE' });
   if (!res.ok) {
     const body = await res.json();
-    alert(body.detail || 'Could not delete');
+    alert(formatApiError(body, 'Could not delete'));
     return;
   }
   selected[currentTab].delete(Number(id));

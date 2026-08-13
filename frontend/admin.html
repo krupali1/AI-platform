@@ -207,6 +207,19 @@ async function apiFetch(url, opts) {
   return res;
 }
 
+// FastAPI/Pydantic validation errors (422) send `detail` as a list of
+// {msg, loc, ...} objects, not a string - without this, `body.detail ||
+// fallback` renders a validation error as the literal "[object Object]".
+function formatApiError(body, fallback) {
+  const detail = body && body.detail;
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(e => (e && e.msg) ? `${(e.loc || []).slice(-1)[0] || ''}: ${e.msg}`.trim() : String(e)).join('; ') || fallback;
+  }
+  return fallback;
+}
+
 async function loadUsers() {
   const [usersRes, projectsRes] = await Promise.all([
     apiFetch('/api/users'),
@@ -265,7 +278,7 @@ async function setRole(userId) {
     if (!res.ok) {
       const body = await res.json();
       msg.className = 'row-msg err';
-      msg.textContent = body.detail || 'Could not update role';
+      msg.textContent = formatApiError(body, 'Could not update role');
       loadUsers();
       return;
     }
@@ -314,7 +327,7 @@ async function createProvider() {
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(body.detail || 'Could not create provider');
+    alert(formatApiError(body, 'Could not create provider'));
     return;
   }
   ['provName', 'provAuthUrl', 'provTokenUrl', 'provClientId', 'provClientSecret', 'provScopes']

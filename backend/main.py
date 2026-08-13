@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.responses import RedirectResponse, FileResponse, JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import or_
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 from database import init_db, SessionLocal
@@ -545,9 +545,9 @@ def select_project(project_id: int, request: Request, user: User = Depends(get_c
 
 
 class ProjectUpdatePayload(BaseModel):
-    domain: str = None
-    team_emails: str = None
-    notify_email: str = None
+    domain: Optional[str] = None
+    team_emails: Optional[str] = None
+    notify_email: Optional[str] = None
 
 
 @app.patch("/api/projects/{project_id}")
@@ -1005,7 +1005,7 @@ def list_users(admin: User = Depends(require_role("admin"))):
 
 class RolePayload(BaseModel):
     role: str
-    locked_project_id: int = None
+    locked_project_id: Optional[int] = None
 
 
 @app.post("/api/users/{user_id}/role")
@@ -1244,7 +1244,7 @@ class RestConnectorPayload(BaseModel):
     auth_style: str = "header"   # "header" | "google_oauth" | "oauth_provider"
     auth_header_name: str = "Authorization"
     auth_value_prefix: str = ""
-    oauth_provider_id: int = None
+    oauth_provider_id: Optional[int] = None
     results_path: str
     field_id: str = ""
     field_title: str = ""

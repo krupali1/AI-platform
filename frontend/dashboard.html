@@ -1072,6 +1072,20 @@ async function apiFetch(url, opts) {
   return res;
 }
 
+// FastAPI/Pydantic validation errors (422) send `detail` as a list of
+// {msg, loc, ...} objects, not a string - this app's own HTTPException
+// calls send a plain string. Without this, `body.detail || fallback`
+// renders a validation error as the unhelpful literal "[object Object]".
+function formatApiError(body, fallback) {
+  const detail = body && body.detail;
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(e => (e && e.msg) ? `${(e.loc || []).slice(-1)[0] || ''}: ${e.msg}`.trim() : String(e)).join('; ') || fallback;
+  }
+  return fallback;
+}
+
 let currentRole = null;
 let currentProjectId = null;
 let currentProjectRole = null;   // this user's role for currentProjectId specifically - see get_effective_project_role in main.py; distinct from currentRole, which is global
@@ -1318,7 +1332,7 @@ async function deleteProjectsByIds(ids) {
     const res = await apiFetch(`/api/projects/${id}`, { method: 'DELETE' });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      alert(body.detail || `Could not delete project #${id}`);
+      alert(formatApiError(body, `Could not delete project #${id}`));
       return false;
     }
     selectedProjects.delete(id);
@@ -1483,7 +1497,7 @@ async function addProjectMember() {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    alert(body.detail || 'Could not add team member');
+    alert(formatApiError(body, 'Could not add team member'));
     return;
   }
   emailInput.value = '';
@@ -1500,7 +1514,7 @@ async function updateProjectMemberRole(memberId, role) {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    alert(body.detail || 'Could not update role');
+    alert(formatApiError(body, 'Could not update role'));
   }
   await loadProjectMembers();
 }
@@ -1511,7 +1525,7 @@ async function removeProjectMember(memberId) {
   const res = await apiFetch(`/api/projects/${currentProjectId}/members/${memberId}`, { method: 'DELETE' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    alert(body.detail || 'Could not remove team member');
+    alert(formatApiError(body, 'Could not remove team member'));
     return;
   }
   await loadProjectMembers();
@@ -1532,7 +1546,7 @@ async function saveFirefliesKey() {
     await loadProjects();
   } else {
     const body = await res.json();
-    alert(body.detail || 'Could not save key');
+    alert(formatApiError(body, 'Could not save key'));
   }
 }
 
@@ -1588,7 +1602,7 @@ async function saveDriveCredentials() {
     await loadProjects();
   } else {
     const body = await res.json();
-    alert(body.detail || 'Could not save credentials');
+    alert(formatApiError(body, 'Could not save credentials'));
   }
 }
 
@@ -1660,7 +1674,7 @@ async function submitNewProject(name, domain) {
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(body.detail || 'Could not create project');
+    alert(formatApiError(body, 'Could not create project'));
     return null;
   }
   const newProject = await res.json();
@@ -1905,7 +1919,7 @@ async function saveProviderSettings() {
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(body.detail || 'Could not save provider settings');
+    alert(formatApiError(body, 'Could not save provider settings'));
     return;
   }
   if (key) {
@@ -1918,7 +1932,7 @@ async function saveProviderSettings() {
       keyInput.value = '';
     } else {
       const body = await keyRes.json().catch(() => ({}));
-      alert(body.detail || 'Provider saved, but the API key could not be stored - it is still empty. Try again.');
+      alert(formatApiError(body, 'Provider saved, but the API key could not be stored - it is still empty. Try again.'));
       await loadMe();
       return;
     }
@@ -2003,7 +2017,7 @@ async function createAgent() {
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(body.detail || 'Could not create agent');
+    alert(formatApiError(body, 'Could not create agent'));
     return;
   }
   document.getElementById('agentName').value = '';
@@ -2119,7 +2133,7 @@ async function createConnector() {
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(body.detail || 'Could not create connector');
+    alert(formatApiError(body, 'Could not create connector'));
     return;
   }
   ['connName', 'connDescription', 'connUrl', 'connResultsPath', 'connFieldId', 'connFieldTitle', 'connFieldContent', 'connFieldUrl', 'connFieldDate']
@@ -2147,7 +2161,7 @@ async function saveConnectorCredential(connectorId) {
     await fetchModules();
   } else {
     const body = await res.json();
-    alert(body.detail || 'Could not save credential');
+    alert(formatApiError(body, 'Could not save credential'));
   }
 }
 
