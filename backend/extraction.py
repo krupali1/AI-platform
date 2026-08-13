@@ -26,6 +26,7 @@ demonstrable end to end without a live API call.
 import os
 import json
 import datetime
+import concurrent.futures
 
 from models import Meeting, Document, Decision, ActionItem, OpenQuestion, Event
 
@@ -33,6 +34,15 @@ from models import Meeting, Document, Decision, ActionItem, OpenQuestion, Event
 # one, so a later live run can tell the two apart and backfill it - see
 # run_extraction's needs_summary check.
 _DEMO_SUMMARY_PREFIX = "Demo mode"
+
+# How many records get summarized at once on a live run. The LLM call is
+# the slow part - a project with a real backlog was processing records
+# strictly one after another, each a full network round-trip, which is
+# what actually made a sync feel slow. Kept modest rather than maximized:
+# past a point, more concurrent calls just trade wall-clock time for more
+# 429s (each of which now retries with its own backoff - see
+# llm_client.py), so this is a balance, not a hard capacity limit.
+_MAX_CONCURRENT_EXTRACTIONS = 4
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
@@ -89,7 +99,11 @@ def run_extraction(session, client, llm_config=None):
     already_facts |= {(a.source_type, a.source_id) for a in session.query(ActionItem).filter_by(client_id=client.id).all()}
     already_facts |= {(q.source_type, q.source_id) for q in session.query(OpenQuestion).filter_by(client_id=client.id).all()}
 
-    new_summaries, new_decisions, new_actions, new_questions, failed = 0, 0, 0, 0, 0
+    # Decide what actually needs an API call up front - same "skip
+    # records that are already fully processed" behavior as before, just
+    # resolved before dispatching instead of inline in a single loop, so
+    # the calls themselves can be issued concurrently below.
+    to_process = []
     for source_type, obj, content in sources:
         if not content:
             continue
@@ -104,44 +118,62 @@ def run_extraction(session, client, llm_config=None):
         is_demo_summary = (obj.synthesized_summary or "").startswith(_DEMO_SUMMARY_PREFIX)
         needs_summary = not obj.synthesized_summary or (llm_config and is_demo_summary)
         needs_facts = (source_type, obj.id) not in already_facts
-        if not needs_summary and not needs_facts:
-            continue  # already fully processed - skip the API call entirely
+        if needs_summary or needs_facts:
+            to_process.append((source_type, obj, content, needs_summary, needs_facts))
 
-        try:
-            result = _extract(content, llm_config)
-        except Exception as e:
-            # Isolated to this one record so a single bad response (or a
-            # broken key/model affecting every record) doesn't stop the
-            # rest of the batch from being attempted - but logged as a
-            # real error, not silently swallowed, and the record is left
-            # exactly as it was so it stays eligible for retry next run
-            # instead of quietly "succeeding" with a blank summary.
-            failed += 1
-            _log(session, client, "extraction-engine", "error",
-                 f"Failed to summarize {source_type.lower()} \"{getattr(obj, 'title', obj.id)}\": {e}")
-            continue
+    new_summaries, new_decisions, new_actions, new_questions, failed = 0, 0, 0, 0, 0
 
-        if needs_summary:
-            obj.synthesized_summary = result.get("summary", "")
-            new_summaries += 1
+    # _extract() itself touches no shared state - just a network call out
+    # to the provider - so several can run at once safely. Everything
+    # after (writing onto `obj`, session.add(), _log()'s own commit) stays
+    # on this thread, since a SQLAlchemy Session isn't thread-safe. Demo
+    # mode is pure local computation with nothing to gain from
+    # parallelizing, so it runs with a single worker - functionally
+    # identical to the old sequential loop, not a separate code path.
+    max_workers = _MAX_CONCURRENT_EXTRACTIONS if llm_config else 1
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_item = {
+            pool.submit(_extract, content, llm_config): (source_type, obj, needs_summary, needs_facts)
+            for source_type, obj, content, needs_summary, needs_facts in to_process
+        }
+        for future in concurrent.futures.as_completed(future_to_item):
+            source_type, obj, needs_summary, needs_facts = future_to_item[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                # Isolated to this one record so a single bad response (or
+                # a broken key/model affecting every record) doesn't stop
+                # the rest of the batch from being attempted - but logged
+                # as a real error, not silently swallowed, and the record
+                # is left exactly as it was so it stays eligible for retry
+                # next run instead of quietly "succeeding" with a blank
+                # summary.
+                failed += 1
+                _log(session, client, "extraction-engine", "error",
+                     f"Failed to summarize {source_type.lower()} \"{getattr(obj, 'title', obj.id)}\": {e}")
+                continue
 
-        if needs_facts:
-            for d in result.get("decisions", []):
-                session.add(Decision(client_id=client.id, description=d, source_type=source_type, source_id=obj.id))
-                new_decisions += 1
-            for a in result.get("action_items", []):
-                session.add(ActionItem(
-                    client_id=client.id,
-                    description=a.get("description", ""),
-                    owner=a.get("owner", ""),
-                    due_date=a.get("due_date", ""),
-                    source_type=source_type,
-                    source_id=obj.id,
-                ))
-                new_actions += 1
-            for q in result.get("open_questions", []):
-                session.add(OpenQuestion(client_id=client.id, description=q, source_type=source_type, source_id=obj.id))
-                new_questions += 1
+            if needs_summary:
+                obj.synthesized_summary = result.get("summary", "")
+                new_summaries += 1
+
+            if needs_facts:
+                for d in result.get("decisions", []):
+                    session.add(Decision(client_id=client.id, description=d, source_type=source_type, source_id=obj.id))
+                    new_decisions += 1
+                for a in result.get("action_items", []):
+                    session.add(ActionItem(
+                        client_id=client.id,
+                        description=a.get("description", ""),
+                        owner=a.get("owner", ""),
+                        due_date=a.get("due_date", ""),
+                        source_type=source_type,
+                        source_id=obj.id,
+                    ))
+                    new_actions += 1
+                for q in result.get("open_questions", []):
+                    session.add(OpenQuestion(client_id=client.id, description=q, source_type=source_type, source_id=obj.id))
+                    new_questions += 1
 
     session.commit()
     mode = f"live, {llm_config['provider']}" if llm_config else "demo"
