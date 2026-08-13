@@ -1617,6 +1617,7 @@ def run_auto_sync_for_project(session, client):
             print(f"[auto-sync] connector '{rc.display_name}' failed for project {client.id}: {e}", flush=True)
 
     llm_config = get_automation_llm_config(client, session)
+    extracted_new = False
     if llm_config:
         # Extraction runs every cycle, not just ones that synced something
         # new - it already skips any record that doesn't need summarizing,
@@ -1624,36 +1625,26 @@ def run_auto_sync_for_project(session, client):
         # before a key was configured, or before this existed) within one
         # tick instead of leaving them stuck until something new happens
         # to sync again.
-        extracted_new = False
         try:
             extraction_result = extraction.run_extraction(session, client, llm_config=llm_config)
             extracted_new = isinstance(extraction_result, dict) and sum(extraction_result.values()) > 0
         except Exception as e:
             print(f"[auto-sync] extraction failed for project {client.id}: {e}", flush=True)
 
-        if synced_any or extracted_new:
-            # Contradiction detection deliberately isn't part of this
-            # automatic chain - unlike extraction/brief, nobody asked for
-            # it to run unattended; contradiction.py is untouched and
-            # still reachable manually if it's ever wired back into the
-            # module list.
-            try:
-                brief_module.generate_brief(session, client, llm_config=llm_config)
-            except Exception as e:
-                print(f"[auto-sync] brief failed for project {client.id}: {e}", flush=True)
-    elif synced_any:
-        # No server-wide key configured - same principle as skipping
-        # connectors above, applied here too. Each of these either writes
-        # a demo placeholder that outranks ("latest") a real brief already
-        # on record, or is simply pointless without a real model behind
-        # it - an unattended cycle silently regressing real, synthesized
-        # output to a placeholder would be actively harmful, not just a
-        # no-op. Leaving existing extraction/brief output alone is
-        # strictly safer than that; a manual RUN with a per-user key
-        # still generates real output on demand.
-        print(f"[auto-sync] project {client.id}: synced new content but no server-wide "
-              f"AI key configured - skipping extraction/brief to avoid regressing real "
-              f"output to a demo placeholder", flush=True)
+    if synced_any or extracted_new:
+        # Contradiction detection deliberately isn't part of this
+        # automatic chain - unlike extraction/brief, nobody asked for
+        # it to run unattended; contradiction.py is untouched and
+        # still reachable manually if it's ever wired back into the
+        # module list.
+        # The overall project summary is compiled by a plain backend
+        # algorithm (see brief.py), not a second LLM call, so it always
+        # runs here regardless of whether an AI provider key is
+        # configured - there's nothing for it to be missing.
+        try:
+            brief_module.generate_brief(session, client)
+        except Exception as e:
+            print(f"[auto-sync] brief failed for project {client.id}: {e}", flush=True)
 
     return synced_any
 
@@ -1710,7 +1701,7 @@ def api_run(module_id: str, request: Request, user: User = Depends(require_role(
             if module_id == "extraction-engine":
                 result = extraction.run_extraction(session, client, llm_config=llm_config)
             elif module_id == "brief-generator":
-                result = brief_module.generate_brief(session, client, llm_config=llm_config)
+                result = brief_module.generate_brief(session, client)
             else:
                 result = contradiction.run_contradiction_check(session, client, llm_config=llm_config)
         elif engine:
@@ -1743,7 +1734,7 @@ def api_run(module_id: str, request: Request, user: User = Depends(require_role(
             wrote_new_content = isinstance(result, dict) and result.get("synced", 0) > 0
             if wrote_new_content or extracted_new:
                 try:
-                    brief_module.generate_brief(session, client, llm_config=auto_llm_config)
+                    brief_module.generate_brief(session, client)
                 except Exception:
                     pass  # a failed summary refresh shouldn't fail the sync that triggered it
 

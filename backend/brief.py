@@ -1,31 +1,15 @@
 """
-Status brief generator. Reads every meeting/document summary, every
-decision, action item, and open question for a project, and asks
-Claude to write a real status brief - the kind of document you'd send
-someone catching up on an engagement cold. Same shape as the Ask
-layer (stuff what's stored into one Claude call), just with a fixed
-prompt instead of a typed question, and it writes the result as its
-own artifact instead of returning it once.
+Project-level status summary. Compiled by a plain backend algorithm
+from records that are already summarized elsewhere - each meeting and
+document gets its own synthesized_summary from extraction.py, and
+decisions/action items/open questions are extracted from those same
+records - rather than by sending everything to an LLM a second time.
+The language understanding already happened once, per record; this
+step is pure organization and formatting of what's already there, so
+it always produces a real result with no AI provider needed and
+nothing to configure.
 """
-import os
-
 from models import Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Event
-
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-
-BRIEF_PROMPT = """Write a complete status summary for this consulting engagement, using only the records below. The reader has never seen this project before and needs to come away fully understanding it: the context and background, everything discussed across meetings and documents, what's been decided and why, what's still open or at risk, what's outstanding, and any other detail that matters to genuinely understanding where this engagement stands. Be thorough, not brief - cover everything relevant in the records rather than compressing to a highlight reel. Organize it however the content actually calls for - by topic, by workstream, chronologically, whatever fits - using headers to break it into sections a reader can scan.
-
-Formatting:
-- A short "#### Heading" line to start each section.
-- **Bold** the key term or takeaway at the start of an important point, not whole sentences.
-- Use numbered lists (1. 2. 3.) for any list of items - decisions, action items, open questions, steps, whatever - never dashes or asterisks as bullets.
-- Plain paragraphs for narrative/context that isn't actually a list.
-
-Do not open with any preamble, meta-commentary, or restatement of what this document is (no "Here is a status brief...", no "This document summarizes...", no generic "Overview" header to start). Begin directly with the actual substance - the first words on the page should be real content about the engagement itself. Do not invent anything not present in the records.
-
-RECORDS:
-{records}
-"""
 
 
 def _log(session, client, module_id, status, message):
@@ -34,65 +18,71 @@ def _log(session, client, module_id, status, message):
 
 
 def _gather_records(session, client):
-    meetings = session.query(Meeting).filter_by(client_id=client.id).order_by(Meeting.occurred_at.desc()).all()
-    documents = session.query(Document).filter_by(client_id=client.id).order_by(Document.modified_at.desc()).all()
+    meetings = session.query(Meeting).filter_by(client_id=client.id).order_by(Meeting.occurred_at.asc()).all()
+    documents = session.query(Document).filter_by(client_id=client.id).order_by(Document.modified_at.asc()).all()
     decisions = session.query(Decision).filter_by(client_id=client.id).all()
     action_items = session.query(ActionItem).filter_by(client_id=client.id).all()
     open_questions = session.query(OpenQuestion).filter_by(client_id=client.id, status="open").all()
-
-    blocks = []
-    for m in meetings:
-        blocks.append(f"Meeting \"{m.title}\": {m.synthesized_summary or m.summary or ''}")
-    for d in documents:
-        blocks.append(f"Document \"{d.title}\": {d.synthesized_summary or ''}")
-    if decisions:
-        blocks.append("Decisions:\n" + "\n".join(f"- {d.description}" for d in decisions))
-    if action_items:
-        blocks.append("Action items:\n" + "\n".join(
-            f"- {a.description} (owner: {a.owner or 'unassigned'}{', due ' + a.due_date if a.due_date else ''}, status: {a.status})"
-            for a in action_items
-        ))
-    if open_questions:
-        blocks.append("Open questions:\n" + "\n".join(f"- {q.description}" for q in open_questions))
-    return meetings, documents, "\n\n".join(blocks)
+    return meetings, documents, decisions, action_items, open_questions
 
 
-def generate_brief(session, client, llm_config=None):
-    meetings, documents, records_text = _gather_records(session, client)
+def generate_brief(session, client):
+    meetings, documents, decisions, action_items, open_questions = _gather_records(session, client)
     if not meetings and not documents:
         _log(session, client, "brief-generator", "warning",
              "No meetings or documents synced yet for this project - nothing to summarize.")
         return {"generated": False}
 
-    if llm_config:
-        try:
-            content = _generate_live(llm_config, records_text)
-            mode = f"live, {llm_config['provider']}"
-        except Exception as e:
-            _log(session, client, "brief-generator", "error", f"Brief generation failed: {e}")
-            raise
-    else:
-        content = _generate_demo(client, meetings, documents)
-        mode = "demo"
-
+    content = _compile_brief(client, meetings, documents, decisions, action_items, open_questions)
     session.add(Brief(client_id=client.id, content=content))
     session.commit()
-    _log(session, client, "brief-generator", "success", f"Generated a new status brief ({mode})")
+    _log(session, client, "brief-generator", "success", "Compiled a new status summary")
     return {"generated": True}
 
 
-def _generate_live(llm_config, records_text):
-    import llm_client
-    return llm_client.complete(
-        llm_config["provider"], llm_config["api_key"], llm_config["model"],
-        BRIEF_PROMPT.format(records=records_text[:60000]), max_tokens=4000,
-        endpoint_url=llm_config.get("endpoint_url"),
-    )
+def _fmt_date(dt):
+    return dt.strftime("%b %-d, %Y") if dt else "undated"
 
 
-def _generate_demo(client, meetings, documents):
-    return (
-        f"Demo mode - no AI provider configured for this account, so this is a plain roll-up, not a synthesized brief. "
-        f"{client.name} has {len(meetings)} meeting(s) and {len(documents)} document(s) synced. "
-        f"Add a provider and key in the header to generate a real status brief."
-    )
+def _compile_brief(client, meetings, documents, decisions, action_items, open_questions):
+    open_actions = [a for a in action_items if a.status != "done"]
+    sections = [
+        "#### Engagement snapshot\n"
+        f"{client.name} has {len(meetings)} meeting(s) and {len(documents)} document(s) synced, "
+        f"with {len(decisions)} decision(s) made, {len(open_actions)} action item(s) outstanding, "
+        f"and {len(open_questions)} open question(s)."
+    ]
+
+    if meetings:
+        lines = [
+            f"{i}. **{m.title}** ({_fmt_date(m.occurred_at)}) - "
+            f"{m.synthesized_summary or m.summary or '(summary not yet generated)'}"
+            for i, m in enumerate(meetings, 1)
+        ]
+        sections.append("#### Meetings\n" + "\n".join(lines))
+
+    if documents:
+        lines = [
+            f"{i}. **{d.title}** ({_fmt_date(d.modified_at)}) - "
+            f"{d.synthesized_summary or '(summary not yet generated)'}"
+            for i, d in enumerate(documents, 1)
+        ]
+        sections.append("#### Documents\n" + "\n".join(lines))
+
+    if decisions:
+        lines = [f"{i}. {d.description}" for i, d in enumerate(decisions, 1)]
+        sections.append("#### Decisions\n" + "\n".join(lines))
+
+    if action_items:
+        lines = [
+            f"{i}. {a.description} (owner: {a.owner or 'unassigned'}"
+            f"{', due ' + a.due_date if a.due_date else ''}, status: {a.status})"
+            for i, a in enumerate(action_items, 1)
+        ]
+        sections.append("#### Action items\n" + "\n".join(lines))
+
+    if open_questions:
+        lines = [f"{i}. {q.description}" for i, q in enumerate(open_questions, 1)]
+        sections.append("#### Open questions\n" + "\n".join(lines))
+
+    return "\n\n".join(sections)
