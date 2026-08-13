@@ -104,10 +104,32 @@ def run_rest_connector(session, client, connector):
             raise RuntimeError(f"results_path '{connector.results_path}' did not point at a list in the response")
 
         count = 0
+        backfilled = 0
         for item in results:
             external_id = str(_get_path(item, connector.field_id) or hash(str(item)))
-            if session.query(Document).filter_by(client_id=client.id, external_id=external_id).first():
+            content = _get_path(item, connector.field_content) or ""
+
+            existing = session.query(Document).filter_by(client_id=client.id, external_id=external_id).first()
+            if existing:
+                # Same fix as the Fireflies/Drive connectors: a record
+                # synced before the source finished generating its content
+                # (Fathom's summary is async, same as Fireflies'
+                # transcription) got permanently stuck empty, since the
+                # dedup check above skipped it on every later sync even
+                # once the content became available. This applies that
+                # backfill generically, to every config-driven connector
+                # at once, rather than each one needing its own copy of
+                # this fix. Deliberately narrow: only touches a record
+                # that's still empty, never overwrites one that already
+                # has real content - a field genuinely, permanently empty
+                # by design (e.g. a calendar event with no description)
+                # just gets harmlessly re-checked next sync, not rewritten.
+                if not existing.content and content:
+                    existing.content = content
+                    existing.synthesized_summary = None
+                    backfilled += 1
                 continue
+
             date_raw = _get_path(item, connector.field_date)
             session.add(Document(
                 client_id=client.id,
@@ -115,13 +137,20 @@ def run_rest_connector(session, client, connector):
                 external_id=external_id,
                 source_url=_get_path(item, connector.field_url),
                 title=_get_path(item, connector.field_title) or "(untitled)",
-                content=_get_path(item, connector.field_content) or "",
+                content=content,
                 modified_at=_parse_dt(date_raw),
             ))
             count += 1
         session.commit()
-        _log(session, client, connector.module_id, "success", f"Synced {count} new record(s) via {connector.display_name}")
-        return {"synced": count, "demo": False}
+
+        backfill_note = f", backfilled content for {backfilled} previously-empty record(s)" if backfilled else ""
+        _log(session, client, connector.module_id, "success",
+             f"Synced {count} new record(s){backfill_note} via {connector.display_name}")
+        # Counted together so a backfill-only run (nothing new, but an old
+        # record's content just became available) still triggers
+        # extraction/brief regeneration downstream, same as Drive's and
+        # Fireflies' equivalent backfill counts already do.
+        return {"synced": count + backfilled, "demo": False}
     except Exception as e:
         _log(session, client, connector.module_id, "error", f"{connector.display_name} sync failed: {e}")
         raise
