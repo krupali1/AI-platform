@@ -1368,6 +1368,7 @@ def set_rest_connector_credential(connector_id: int, payload: CredentialPayload,
     if not project:
         session.close()
         raise HTTPException(400, "No project selected")
+    require_project_admin(user, project.id, session)
     existing = session.query(RestConnectorCredential).filter_by(connector_id=connector_id, client_id=project.id).first()
     if existing:
         existing.encrypted_value = encrypt(value)
@@ -1385,6 +1386,7 @@ def clear_rest_connector_credential(connector_id: int, request: Request, user: U
     if not project:
         session.close()
         raise HTTPException(400, "No project selected")
+    require_project_admin(user, project.id, session)
     session.query(RestConnectorCredential).filter_by(connector_id=connector_id, client_id=project.id).delete()
     session.commit()
     session.close()
