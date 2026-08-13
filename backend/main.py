@@ -1267,6 +1267,8 @@ def list_rest_connectors(user: User = Depends(get_current_user)):
         out.append({
             "id": r.id, "module_id": r.module_id, "display_name": r.display_name, "description": r.description,
             "search_url_template": r.search_url_template, "auth_style": r.auth_style,
+            "auth_header_name": r.auth_header_name, "auth_value_prefix": r.auth_value_prefix,
+            "oauth_provider_id": r.oauth_provider_id,
             "results_path": r.results_path, "field_id": r.field_id, "field_title": r.field_title,
             "field_content": r.field_content, "field_url": r.field_url, "field_date": r.field_date,
             "content_type": r.content_type or "document",
@@ -1331,6 +1333,69 @@ def create_rest_connector(payload: RestConnectorPayload, request: Request, user:
     session.refresh(rc)
     for pid in valid_project_ids:
         session.add(RestConnectorProject(connector_id=rc.id, client_id=pid))
+    session.commit()
+    out = {"id": rc.id, "module_id": rc.module_id}
+    session.close()
+    return out
+
+
+@app.patch("/api/rest-connectors/{connector_id}")
+def update_rest_connector(connector_id: int, payload: RestConnectorPayload, user: User = Depends(require_role("admin", "member"))):
+    """Same validation as create_rest_connector, applied in place instead
+    of as a new row - module_id and the connector's id are left alone so
+    its Event log history and saved credential (keyed by connector_id,
+    not module_id) both carry over untouched. Exists specifically so a
+    misconfigured field (a wrong header name, a stray URL param) can be
+    fixed directly instead of deleting and recreating the connector -
+    which loses the credential and forces re-entering it."""
+    name = payload.display_name.strip()
+    if not name:
+        raise HTTPException(400, "display_name is required")
+    if payload.auth_style not in ("header", "google_oauth", "oauth_provider"):
+        raise HTTPException(400, "auth_style must be 'header', 'google_oauth', or 'oauth_provider'")
+    if payload.auth_style == "oauth_provider" and not payload.oauth_provider_id:
+        raise HTTPException(400, "oauth_provider_id is required when auth_style is 'oauth_provider'")
+    if payload.content_type not in ("document", "meeting"):
+        raise HTTPException(400, "content_type must be 'document' or 'meeting'")
+    if "{query}" not in payload.search_url_template and "{domain}" not in payload.search_url_template:
+        raise HTTPException(400, "search_url_template should include {query} and/or {domain} - otherwise every project would fetch the same thing")
+    if not payload.results_path:
+        raise HTTPException(400, "results_path is required - the JSON path to the list of results in the response")
+
+    session = SessionLocal()
+    rc = session.query(RestConnector).filter_by(id=connector_id).first()
+    if not rc:
+        session.close()
+        raise HTTPException(404, "connector not found")
+
+    valid_project_ids = {c.id for c in session.query(Client.id).filter(Client.id.in_(payload.project_ids)).all()}
+    if set(payload.project_ids) - valid_project_ids:
+        session.close()
+        raise HTTPException(400, "One or more selected projects don't exist")
+
+    rc.display_name = name
+    rc.description = payload.description.strip()
+    rc.search_url_template = payload.search_url_template.strip()
+    rc.auth_style = payload.auth_style
+    rc.auth_header_name = payload.auth_header_name.strip() or "Authorization"
+    rc.auth_value_prefix = payload.auth_value_prefix
+    rc.oauth_provider_id = payload.oauth_provider_id if payload.auth_style == "oauth_provider" else None
+    rc.results_path = payload.results_path.strip()
+    rc.field_id = payload.field_id.strip()
+    rc.field_title = payload.field_title.strip()
+    rc.field_content = payload.field_content.strip()
+    rc.field_url = payload.field_url.strip()
+    rc.field_date = payload.field_date.strip()
+    rc.content_type = payload.content_type
+
+    existing_links = session.query(RestConnectorProject).filter_by(connector_id=connector_id).all()
+    existing_project_ids = {l.client_id for l in existing_links}
+    for link in existing_links:
+        if link.client_id not in valid_project_ids:
+            session.delete(link)
+    for pid in valid_project_ids - existing_project_ids:
+        session.add(RestConnectorProject(connector_id=connector_id, client_id=pid))
+
     session.commit()
     out = {"id": rc.id, "module_id": rc.module_id}
     session.close()

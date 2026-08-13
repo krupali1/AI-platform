@@ -346,6 +346,11 @@
     background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 0; cursor: pointer;
   }
   .agent-delete-btn:hover { color: var(--bad); border-color: var(--bad); }
+  .agent-edit-btn {
+    width: 100%; margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+    background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 0; cursor: pointer;
+  }
+  .agent-edit-btn:hover { color: var(--accent); border-color: var(--accent); }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
   .status-dot.success { background: var(--good); }
   .status-dot.error { background: var(--bad); }
@@ -788,7 +793,7 @@
 <div class="modal-overlay" id="newConnectorOverlay" onclick="if(event.target===this) toggleNewConnector()">
   <div class="project-new-form agent-form" id="newConnectorForm">
     <div class="modal-header">
-      <h4>New connector</h4>
+      <h4 id="newConnectorTitle">New connector</h4>
       <button class="modal-close" onclick="toggleNewConnector()">✕</button>
     </div>
     <p class="tp-hint" style="margin:-2px 0 4px;">Available everywhere - pick which project it applies to below, or make it available to every project.</p>
@@ -831,7 +836,7 @@
     </div>
     <span class="agent-reads-label">Applies to:</span>
     <div id="connProjectChecklist" class="project-checklist"></div>
-    <button class="primary" onclick="createConnector()">Create connector</button>
+    <button class="primary" id="newConnectorSubmitBtn" onclick="saveConnector()">Create connector</button>
   </div>
 </div>
 
@@ -2062,19 +2067,21 @@ async function fetchModules() {
         ? '<div class="read-only-note">read-only access</div>'
         : `<button class="run-btn" id="btn-${m.module_id}" onclick="runModule('${m.module_id}')">RUN</button>`}
       ${m.engine_id && currentRole !== 'viewer' ? `<button class="agent-delete-btn" onclick="deleteAgent(${m.engine_id})">Delete agent</button>` : ''}
+      ${m.connector_id && currentRole !== 'viewer' ? `<button class="agent-edit-btn" onclick="openEditConnector(${m.connector_id})">Edit connector</button>` : ''}
       ${m.connector_id && currentRole !== 'viewer' ? `<button class="agent-delete-btn" onclick="deleteConnector(${m.connector_id})">Delete connector</button>` : ''}
     </div>
   `).join('');
 }
 
-function renderProjectChecklist(containerId) {
+function renderProjectChecklist(containerId, checkedIds) {
   const container = document.getElementById(containerId);
   if (!allProjects.length) {
     container.innerHTML = '<p class="empty-note">No projects yet - this will be offered automatically once you create your first one.</p>';
     return;
   }
+  const checked = checkedIds || [currentProjectId];
   container.innerHTML = allProjects.map(p => `
-    <label><input type="checkbox" class="proj-check" value="${p.id}" ${p.id === currentProjectId ? 'checked' : ''} /> ${p.name}</label>
+    <label><input type="checkbox" class="proj-check" value="${p.id}" ${checked.includes(p.id) ? 'checked' : ''} /> ${p.name}</label>
   `).join('');
 }
 
@@ -2118,19 +2125,85 @@ async function deleteAgent(engineId) {
   await fetchModules();
 }
 
+let editingConnectorId = null;
+
 async function toggleNewConnector() {
   const overlay = document.getElementById('newConnectorOverlay');
   const opening = !overlay.classList.contains('open');
-  overlay.classList.toggle('open', opening);
   if (opening) {
+    // Reached via the "+ New Connector" header button, not the per-card
+    // Edit button - always a fresh create, even if the modal was left
+    // mid-edit last time it closed.
+    editingConnectorId = null;
+    resetConnectorForm();
+    document.getElementById('newConnectorTitle').textContent = 'New connector';
+    document.getElementById('newConnectorSubmitBtn').textContent = 'Create connector';
     renderProjectChecklist('connProjectChecklist');
-    const res = await apiFetch('/api/oauth-providers');
-    const providers = await res.json();
-    const select = document.getElementById('connOauthProviderSelect');
-    select.innerHTML = providers.length
-      ? providers.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
-      : '<option value="">No providers registered yet</option>';
+    await loadConnOauthProviders();
   }
+  overlay.classList.toggle('open', opening);
+}
+
+async function loadConnOauthProviders() {
+  const res = await apiFetch('/api/oauth-providers');
+  const providers = await res.json();
+  const select = document.getElementById('connOauthProviderSelect');
+  select.innerHTML = providers.length
+    ? providers.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
+    : '<option value="">No providers registered yet</option>';
+  return providers;
+}
+
+function resetConnectorForm() {
+  ['connName', 'connDescription', 'connUrl', 'connResultsPath', 'connFieldId', 'connFieldTitle', 'connFieldContent', 'connFieldUrl', 'connFieldDate']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('connHeaderName').value = 'Authorization';
+  document.getElementById('connValuePrefix').value = '';
+  document.querySelector('input[name="connContentType"][value="document"]').checked = true;
+  document.querySelector('input[name="connAuth"][value="header"]').checked = true;
+  toggleConnAuthFields();
+  document.getElementById('connAdvancedFields').classList.remove('open');
+  document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▾';
+}
+
+// Edit re-opens the same modal used for creating, pre-filled from this
+// connector's current row - the header name/URL/field mappings are
+// otherwise only ever set once, at creation, with no way to see or fix
+// a mistake short of deleting the connector (and its saved credential
+// along with it) and starting over.
+async function openEditConnector(connectorId) {
+  const connectors = await apiFetch('/api/rest-connectors').then(r => r.json());
+  const conn = connectors.find(c => c.id === connectorId);
+  if (!conn) return;
+
+  editingConnectorId = connectorId;
+  document.getElementById('newConnectorTitle').textContent = `Edit connector: ${conn.display_name}`;
+  document.getElementById('newConnectorSubmitBtn').textContent = 'Save changes';
+
+  document.getElementById('connName').value = conn.display_name;
+  document.getElementById('connDescription').value = conn.description || '';
+  document.querySelector(`input[name="connContentType"][value="${conn.content_type}"]`).checked = true;
+  document.querySelector(`input[name="connAuth"][value="${conn.auth_style}"]`).checked = true;
+  document.getElementById('connHeaderName').value = conn.auth_header_name || 'Authorization';
+  document.getElementById('connValuePrefix').value = conn.auth_value_prefix || '';
+  document.getElementById('connUrl').value = conn.search_url_template || '';
+  document.getElementById('connResultsPath').value = conn.results_path || '';
+  document.getElementById('connFieldId').value = conn.field_id || '';
+  document.getElementById('connFieldTitle').value = conn.field_title || '';
+  document.getElementById('connFieldContent').value = conn.field_content || '';
+  document.getElementById('connFieldUrl').value = conn.field_url || '';
+  document.getElementById('connFieldDate').value = conn.field_date || '';
+  document.getElementById('connAdvancedFields').classList.add('open');
+  document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▴';
+  toggleConnAuthFields();
+
+  const providers = await loadConnOauthProviders();
+  if (conn.auth_style === 'oauth_provider' && providers.length) {
+    document.getElementById('connOauthProviderSelect').value = conn.oauth_provider_id;
+  }
+  renderProjectChecklist('connProjectChecklist', conn.project_ids);
+
+  document.getElementById('newConnectorOverlay').classList.add('open');
 }
 
 function toggleConnAuthFields() {
@@ -2182,7 +2255,7 @@ function toggleConnAdvanced() {
   document.getElementById('connAdvancedToggle').textContent = `Field mapping (advanced) ${opening ? '▴' : '▾'}`;
 }
 
-async function createConnector() {
+async function saveConnector() {
   const display_name = document.getElementById('connName').value.trim();
   const description = document.getElementById('connDescription').value.trim();
   const content_type = document.querySelector('input[name="connContentType"]:checked').value;
@@ -2209,8 +2282,9 @@ async function createConnector() {
     alert('Pick an OAuth provider - if none are listed, an admin needs to register one first.');
     return;
   }
-  const res = await apiFetch('/api/rest-connectors', {
-    method: 'POST',
+  const isEdit = editingConnectorId !== null;
+  const res = await apiFetch(isEdit ? `/api/rest-connectors/${editingConnectorId}` : '/api/rest-connectors', {
+    method: isEdit ? 'PATCH' : 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       display_name, description, content_type, search_url_template, auth_style, auth_header_name, auth_value_prefix,
@@ -2219,12 +2293,11 @@ async function createConnector() {
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(formatApiError(body, 'Could not create connector'));
+    alert(formatApiError(body, isEdit ? 'Could not save changes' : 'Could not create connector'));
     return;
   }
-  ['connName', 'connDescription', 'connUrl', 'connResultsPath', 'connFieldId', 'connFieldTitle', 'connFieldContent', 'connFieldUrl', 'connFieldDate']
-    .forEach(id => { document.getElementById(id).value = ''; });
-  document.querySelector('input[name="connContentType"][value="document"]').checked = true;
+  editingConnectorId = null;
+  resetConnectorForm();
   document.getElementById('newConnectorOverlay').classList.remove('open');
   await fetchModules();
 }
