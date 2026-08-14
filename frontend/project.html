@@ -241,14 +241,139 @@
     border-radius: 6px; margin-top: 8px; box-sizing: border-box;
   }
   @media (max-width: 900px) { .team-panel-inner { grid-template-columns: 1fr; } }
+
+  .header-create-row { display: flex; gap: 8px; }
+  .header-new-btn {
+    font-family: var(--mono); font-size: 11px; color: #fff;
+    background: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  .header-new-btn:hover { opacity: 0.85; }
+
+  .agent-form {
+    display: flex !important; flex-direction: column; align-items: stretch !important; gap: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+    box-shadow: var(--shadow-md); width: 100%; max-width: 480px;
+  }
+  .agent-form input[type="text"], .agent-form input[type="password"], .agent-form select, .agent-form textarea {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 10px; border-radius: 6px; box-sizing: border-box;
+  }
+  .agent-form textarea { min-height: 70px; resize: vertical; }
+  .agent-reads, .agent-scope { display: flex; flex-wrap: wrap; gap: 10px; }
+  .agent-reads-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .agent-reads label, .agent-scope label {
+    display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+  }
+  .agent-reads input, .agent-scope input { accent-color: var(--accent); min-width: 0 !important; width: auto !important; flex: none !important; }
+  .agent-form .btn-row { display: flex; gap: 8px; }
+  .agent-form .btn-row button { flex: 1; }
+  .project-checklist {
+    display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-raised);
+  }
+  .project-checklist label { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+  .project-checklist input { accent-color: var(--accent); }
+  .project-checklist .empty-note { margin: 0; font-size: 11.5px; }
+  #connHeaderFields { display: flex; flex-direction: column; gap: 8px; }
+  .conn-detect-sample { margin-top: 8px; }
+  .conn-detect-sample pre {
+    white-space: pre-wrap; word-break: break-all; font-family: var(--mono); font-size: 11px; color: var(--text);
+    background: var(--panel-raised); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    max-height: 220px; overflow-y: auto; margin: 0;
+  }
 </style>
 </head>
 <body>
 
 <header>
   <div class="title">CLIENT MEMORY CONSOLE <span style="color:var(--text-muted)">·</span> <strong id="headerProjectName">THIS PROJECT</strong></div>
-  <a class="back" href="/">← Console</a>
+  <div style="display:flex; align-items:center; gap:10px;">
+    <div class="header-create-row">
+      <button class="header-new-btn" onclick="toggleNewAgent()">+ New Agent</button>
+      <button class="header-new-btn" onclick="toggleNewConnector()">+ New Connector</button>
+    </div>
+    <a class="back" href="/">← Console</a>
+  </div>
 </header>
+
+<div class="modal-overlay" id="newAgentOverlay" onclick="if(event.target===this) toggleNewAgent()">
+  <div class="project-new-form agent-form" id="newAgentForm">
+    <div class="modal-header">
+      <h4>New agent</h4>
+      <button class="modal-close" onclick="toggleNewAgent()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;">Available everywhere - pick which project it applies to below, or make it available to every project.</p>
+    <input id="agentName" type="text" placeholder="Agent name (e.g. Risk Tracker)" />
+    <input id="agentDescription" type="text" placeholder="One-line description" />
+    <div class="agent-reads">
+      <span class="agent-reads-label">Reads:</span>
+      <label><input type="checkbox" value="Meeting" checked /> Meetings</label>
+      <label><input type="checkbox" value="Document" checked /> Documents</label>
+      <label><input type="checkbox" value="Decision" /> Decisions</label>
+      <label><input type="checkbox" value="ActionItem" /> Action items</label>
+      <label><input type="checkbox" value="OpenQuestion" /> Open questions</label>
+      <label><input type="checkbox" value="Brief" /> Briefs</label>
+    </div>
+    <textarea id="agentPrompt" placeholder="What should this agent do with the records it reads? e.g. 'List anything that looks like a risk to this engagement succeeding.'"></textarea>
+    <span class="agent-reads-label">Applies to:</span>
+    <div id="agentProjectChecklist" class="project-checklist"></div>
+    <button class="primary" onclick="createAgent()">Create agent</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="newConnectorOverlay" onclick="if(event.target===this) toggleNewConnector()">
+  <div class="project-new-form agent-form" id="newConnectorForm">
+    <div class="modal-header">
+      <h4 id="newConnectorTitle">New connector</h4>
+      <button class="modal-close" onclick="toggleNewConnector()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;">Available everywhere - pick which project it applies to below, or make it available to every project.</p>
+    <select id="connPreset" onchange="applyConnPreset()">
+      <option value="">Custom - pick a known service, or fill in everything below yourself</option>
+    </select>
+    <input id="connName" type="text" placeholder="Connector name (e.g. Slack)" />
+    <input id="connDescription" type="text" placeholder="One-line description" />
+    <span class="agent-reads-label">What does this pull in?</span>
+    <div class="agent-scope">
+      <label><input type="radio" name="connContentType" value="document" checked /> Documents (files, messages, pages)</label>
+      <label><input type="radio" name="connContentType" value="meeting" /> Meetings (calls, recaps, transcripts)</label>
+    </div>
+    <div class="agent-scope">
+      <label><input type="radio" name="connAuth" value="header" checked onchange="toggleConnAuthFields()" /> Static API key</label>
+      <label><input type="radio" name="connAuth" value="google_oauth" onchange="toggleConnAuthFields()" /> Connected Google account</label>
+      <label><input type="radio" name="connAuth" value="oauth_provider" onchange="toggleConnAuthFields()" /> OAuth-connected app</label>
+    </div>
+    <div id="connHeaderFields">
+      <input id="connHeaderName" type="text" placeholder="Header name (e.g. Authorization)" value="Authorization" />
+      <input id="connValuePrefix" type="text" placeholder="Prefix before the key, if any (e.g. 'Bearer ')" />
+      <input id="connTestKey" type="password" placeholder="API key, to test with below (optional if already saved in Team & Keys)" />
+    </div>
+    <div id="connOauthProviderFields" style="display:none;">
+      <select id="connOauthProviderSelect"></select>
+      <p class="tp-hint" style="margin:4px 0;">No providers registered yet? An admin adds one from the Admin page first.</p>
+    </div>
+    <input id="connUrl" type="text" placeholder="Search URL - use {query} for project name, {domain} for client domain, e.g. https://slack.com/api/search.messages?query={query}" />
+    <button type="button" class="tp-advanced-toggle" id="connDetectBtn" onclick="testAndDetectFields()">Test &amp; detect fields</button>
+    <div class="conn-detect-sample" id="connDetectSampleWrap" style="display:none;">
+      <p class="tp-hint" style="margin:4px 0;">Sample record from the live response - field mapping below was guessed from these field names, review before saving.</p>
+      <pre id="connDetectSample"></pre>
+    </div>
+    <button type="button" class="tp-advanced-toggle" onclick="toggleConnAdvanced()" id="connAdvancedToggle">Field mapping (advanced) ▾</button>
+    <div class="tp-advanced" id="connAdvancedFields">
+      <p class="tp-hint" style="margin:4px 0;">Dotted JSON paths into each API response. "results_path" finds the list; the rest are relative to each item in it. A known-service preset, or Test &amp; detect fields above, fills these in for you.</p>
+      <input id="connResultsPath" type="text" placeholder="results_path (e.g. items, or messages.matches)" />
+      <input id="connFieldId" type="text" placeholder="field_id, for dedup (e.g. id)" />
+      <input id="connFieldTitle" type="text" placeholder="field_title (e.g. summary or text)" />
+      <input id="connFieldContent" type="text" placeholder="field_content (e.g. description or text)" />
+      <input id="connFieldUrl" type="text" placeholder="field_url (e.g. htmlLink or permalink)" />
+      <input id="connFieldDate" type="text" placeholder="field_date (e.g. start.dateTime or ts)" />
+    </div>
+    <span class="agent-reads-label">Applies to:</span>
+    <div id="connProjectChecklist" class="project-checklist"></div>
+    <button class="primary" id="newConnectorSubmitBtn" onclick="saveConnector()">Create connector</button>
+  </div>
+</div>
 
 <div class="modal-overlay" id="teamOverlay" onclick="if(event.target===this) toggleTeamPanel()">
   <div class="team-panel-modal" id="teamPanel">
@@ -338,6 +463,9 @@
       <div class="sidebar-label">This Project</div>
       <div class="sidebar-project-row">
         <a class="sidebar-project-name" id="projectTitle" href="/project" title="This project">…</a>
+        <button class="sidebar-group-caret-btn" id="thisProjectCaretBtn" onclick="toggleThisProjectMenu()" title="Collapse/expand">
+          <span class="sidebar-caret" id="thisProjectCaret">▾</span>
+        </button>
       </div>
       <div id="thisProjectGroup">
         <a class="sidebar-item" href="/repository">Repository</a>
@@ -431,12 +559,286 @@ let currentProjectId = null;
 let currentProjectRole = null;
 let allProjects = [];
 
+function renderProjectChecklist(containerId, checkedIds) {
+  const container = document.getElementById(containerId);
+  if (!allProjects.length) {
+    container.innerHTML = '<p class="empty-note">No projects yet - this will be offered automatically once you create your first one.</p>';
+    return;
+  }
+  const checked = checkedIds || [currentProjectId];
+  container.innerHTML = allProjects.map(p => `
+    <label><input type="checkbox" class="proj-check" value="${p.id}" ${checked.includes(p.id) ? 'checked' : ''} /> ${p.name}</label>
+  `).join('');
+}
+
+function toggleNewAgent() {
+  const overlay = document.getElementById('newAgentOverlay');
+  const opening = !overlay.classList.contains('open');
+  overlay.classList.toggle('open', opening);
+  if (opening) renderProjectChecklist('agentProjectChecklist');
+}
+
+async function createAgent() {
+  const display_name = document.getElementById('agentName').value.trim();
+  const description = document.getElementById('agentDescription').value.trim();
+  const prompt_template = document.getElementById('agentPrompt').value.trim();
+  const reads = Array.from(document.querySelectorAll('.agent-reads input:checked')).map(i => i.value).join(', ');
+  const project_ids = Array.from(document.querySelectorAll('#agentProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+  if (!display_name || !prompt_template || !reads) {
+    alert('Name, at least one "reads" type, and a prompt are all required.');
+    return;
+  }
+  const res = await apiFetch('/api/engines', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display_name, description, reads, prompt_template, project_ids }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(formatApiError(body, 'Could not create agent'));
+    return;
+  }
+  document.getElementById('agentName').value = '';
+  document.getElementById('agentDescription').value = '';
+  document.getElementById('agentPrompt').value = '';
+  document.getElementById('newAgentOverlay').classList.remove('open');
+}
+
+let editingConnectorId = null;
+
+async function toggleNewConnector() {
+  const overlay = document.getElementById('newConnectorOverlay');
+  const opening = !overlay.classList.contains('open');
+  if (opening) {
+    editingConnectorId = null;
+    resetConnectorForm();
+    document.getElementById('newConnectorTitle').textContent = 'New connector';
+    document.getElementById('newConnectorSubmitBtn').textContent = 'Create connector';
+    renderProjectChecklist('connProjectChecklist');
+    await loadConnOauthProviders();
+  }
+  overlay.classList.toggle('open', opening);
+}
+
+async function loadConnOauthProviders() {
+  const res = await apiFetch('/api/oauth-providers');
+  const providers = await res.json();
+  const select = document.getElementById('connOauthProviderSelect');
+  select.innerHTML = providers.length
+    ? providers.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
+    : '<option value="">No providers registered yet</option>';
+  return providers;
+}
+
+function resetConnectorForm() {
+  ['connName', 'connDescription', 'connUrl', 'connResultsPath', 'connFieldId', 'connFieldTitle', 'connFieldContent', 'connFieldUrl', 'connFieldDate', 'connTestKey']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('connPreset').value = '';
+  document.getElementById('connHeaderName').value = 'Authorization';
+  document.getElementById('connValuePrefix').value = '';
+  document.querySelector('input[name="connContentType"][value="document"]').checked = true;
+  document.querySelector('input[name="connAuth"][value="header"]').checked = true;
+  toggleConnAuthFields();
+  document.getElementById('connAdvancedFields').classList.remove('open');
+  document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▾';
+  document.getElementById('connDetectSampleWrap').style.display = 'none';
+}
+
+function toggleConnAuthFields() {
+  const style = document.querySelector('input[name="connAuth"]:checked').value;
+  document.getElementById('connHeaderFields').style.display = style === 'header' ? 'flex' : 'none';
+  document.getElementById('connOauthProviderFields').style.display = style === 'oauth_provider' ? 'block' : 'none';
+}
+
+const CONNECTOR_PRESETS = {
+  calendar: {
+    name: 'Google Calendar',
+    description: 'Pulls calendar events matching the project name, via the connected Google account.',
+    content_type: 'document',
+    auth_style: 'google_oauth',
+    url: 'https://www.googleapis.com/calendar/v3/calendars/primary/events?q={query}',
+    results_path: 'items',
+    field_id: 'id',
+    field_title: 'summary',
+    field_content: 'description',
+    field_url: 'htmlLink',
+    field_date: 'start.dateTime',
+  },
+  fathom: {
+    name: 'Fathom',
+    description: "Pulls meeting recaps for anyone at the client's domain.",
+    content_type: 'meeting',
+    auth_style: 'header',
+    auth_header_name: 'X-Api-Key',
+    auth_value_prefix: '',
+    url: 'https://api.fathom.ai/external/v1/meetings?calendar_invitees_domains[]={domain}&include_summary=true&limit=10',
+    results_path: 'items',
+    field_id: 'recording_id',
+    field_title: 'meeting_title',
+    field_content: 'default_summary.markdown_formatted',
+    field_url: 'share_url',
+    field_date: 'recording_start_time',
+  },
+};
+
+function populateConnPresetOptions() {
+  const select = document.getElementById('connPreset');
+  const custom = select.querySelector('option[value=""]');
+  select.innerHTML = '';
+  select.appendChild(custom);
+  Object.entries(CONNECTOR_PRESETS).forEach(([key, preset]) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = `${preset.name} - ${preset.description}`;
+    select.appendChild(opt);
+  });
+}
+
+function applyConnPreset() {
+  const key = document.getElementById('connPreset').value;
+  if (!key) return;
+  const preset = CONNECTOR_PRESETS[key];
+  const nameInput = document.getElementById('connName');
+  const descInput = document.getElementById('connDescription');
+  if (!nameInput.value.trim()) nameInput.value = preset.name;
+  if (!descInput.value.trim()) descInput.value = preset.description;
+  document.querySelector(`input[name="connContentType"][value="${preset.content_type}"]`).checked = true;
+  document.querySelector(`input[name="connAuth"][value="${preset.auth_style}"]`).checked = true;
+  if (preset.auth_style === 'header') {
+    document.getElementById('connHeaderName').value = preset.auth_header_name || 'Authorization';
+    document.getElementById('connValuePrefix').value = preset.auth_value_prefix || '';
+  }
+  toggleConnAuthFields();
+  document.getElementById('connUrl').value = preset.url;
+  document.getElementById('connResultsPath').value = preset.results_path;
+  document.getElementById('connFieldId').value = preset.field_id;
+  document.getElementById('connFieldTitle').value = preset.field_title;
+  document.getElementById('connFieldContent').value = preset.field_content;
+  document.getElementById('connFieldUrl').value = preset.field_url;
+  document.getElementById('connFieldDate').value = preset.field_date;
+  document.getElementById('connAdvancedFields').classList.add('open');
+  document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▴';
+}
+
+async function testAndDetectFields() {
+  const search_url_template = document.getElementById('connUrl').value.trim();
+  if (!search_url_template) {
+    alert('Enter a search URL first.');
+    return;
+  }
+  const auth_style = document.querySelector('input[name="connAuth"]:checked').value;
+  const auth_header_name = document.getElementById('connHeaderName').value.trim();
+  const auth_value_prefix = document.getElementById('connValuePrefix').value;
+  const test_key = document.getElementById('connTestKey').value.trim();
+  const oauth_provider_id = auth_style === 'oauth_provider'
+    ? parseInt(document.getElementById('connOauthProviderSelect').value, 10) || null
+    : null;
+
+  const btn = document.getElementById('connDetectBtn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  try {
+    const res = await apiFetch('/api/rest-connectors/detect-fields', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        search_url_template, auth_style, auth_header_name, auth_value_prefix,
+        oauth_provider_id, connector_id: editingConnectorId, test_key: test_key || null,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      alert(formatApiError(body, 'Test request failed'));
+      return;
+    }
+    if (!body.suggested_fields) {
+      alert("Connected, but couldn't find a list of records in the response - check the URL, or fill in results_path manually.");
+      return;
+    }
+    document.getElementById('connResultsPath').value = body.results_path || '';
+    document.getElementById('connFieldId').value = body.suggested_fields.field_id || '';
+    document.getElementById('connFieldTitle').value = body.suggested_fields.field_title || '';
+    document.getElementById('connFieldContent').value = body.suggested_fields.field_content || '';
+    document.getElementById('connFieldUrl').value = body.suggested_fields.field_url || '';
+    document.getElementById('connFieldDate').value = body.suggested_fields.field_date || '';
+    document.getElementById('connAdvancedFields').classList.add('open');
+    document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▴';
+    document.getElementById('connDetectSample').textContent = JSON.stringify(body.sample_item, null, 2);
+    document.getElementById('connDetectSampleWrap').style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+function toggleConnAdvanced() {
+  const el = document.getElementById('connAdvancedFields');
+  const opening = !el.classList.contains('open');
+  el.classList.toggle('open', opening);
+  document.getElementById('connAdvancedToggle').textContent = `Field mapping (advanced) ${opening ? '▴' : '▾'}`;
+}
+
+async function saveConnector() {
+  const display_name = document.getElementById('connName').value.trim();
+  const description = document.getElementById('connDescription').value.trim();
+  const content_type = document.querySelector('input[name="connContentType"]:checked').value;
+  const search_url_template = document.getElementById('connUrl').value.trim();
+  const auth_style = document.querySelector('input[name="connAuth"]:checked').value;
+  const auth_header_name = document.getElementById('connHeaderName').value.trim();
+  const auth_value_prefix = document.getElementById('connValuePrefix').value;
+  const oauth_provider_id = auth_style === 'oauth_provider'
+    ? parseInt(document.getElementById('connOauthProviderSelect').value, 10) || null
+    : null;
+  const results_path = document.getElementById('connResultsPath').value.trim();
+  const field_id = document.getElementById('connFieldId').value.trim();
+  const field_title = document.getElementById('connFieldTitle').value.trim();
+  const field_content = document.getElementById('connFieldContent').value.trim();
+  const field_url = document.getElementById('connFieldUrl').value.trim();
+  const field_date = document.getElementById('connFieldDate').value.trim();
+  const project_ids = Array.from(document.querySelectorAll('#connProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+
+  if (!display_name || !search_url_template || !results_path) {
+    alert('Name, search URL, and results_path are all required.');
+    return;
+  }
+  if (auth_style === 'oauth_provider' && !oauth_provider_id) {
+    alert('Pick an OAuth provider - if none are listed, an admin needs to register one first.');
+    return;
+  }
+  const isEdit = editingConnectorId !== null;
+  const res = await apiFetch(isEdit ? `/api/rest-connectors/${editingConnectorId}` : '/api/rest-connectors', {
+    method: isEdit ? 'PATCH' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      display_name, description, content_type, search_url_template, auth_style, auth_header_name, auth_value_prefix,
+      oauth_provider_id, results_path, field_id, field_title, field_content, field_url, field_date, project_ids,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(formatApiError(body, isEdit ? 'Could not save changes' : 'Could not create connector'));
+    return;
+  }
+  editingConnectorId = null;
+  resetConnectorForm();
+  document.getElementById('newConnectorOverlay').classList.remove('open');
+}
+
 async function loadRole() {
   const res = await apiFetch('/api/me');
   const me = await res.json();
   if (me.role === 'admin') {
     document.getElementById('sidebarAdminLink').style.display = 'block';
   }
+}
+
+function toggleThisProjectMenu() {
+  const group = document.getElementById('thisProjectGroup');
+  const caret = document.getElementById('thisProjectCaret');
+  const opening = group.style.display === 'none';
+  group.style.display = opening ? 'flex' : 'none';
+  caret.classList.toggle('open', opening);
 }
 
 async function loadCurrentProject() {
@@ -884,6 +1286,7 @@ async function clearDriveCredentials() {
   const params = new URLSearchParams(window.location.search);
   await loadRole();
   await loadCurrentProject();
+  populateConnPresetOptions();
   if (params.get('error') === 'drive_connect_expired') {
     alert('That Drive connection attempt took too long or your session expired - open Team & Keys and try Connect Google Account again.');
     window.history.replaceState({}, '', '/project');

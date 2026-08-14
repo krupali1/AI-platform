@@ -370,6 +370,9 @@
       <div class="sidebar-label">This Project</div>
       <div class="sidebar-project-row">
         <a class="sidebar-project-name" id="projectTitle" href="/project" title="This project">…</a>
+        <button class="sidebar-group-caret-btn" id="thisProjectCaretBtn" onclick="toggleThisProjectMenu()" title="Collapse/expand">
+          <span class="sidebar-caret" id="thisProjectCaret">▾</span>
+        </button>
       </div>
       <div id="thisProjectGroup">
         <a class="sidebar-item" href="/repository">Repository</a>
@@ -455,6 +458,14 @@ async function loadMe() {
   if (me.role === 'admin') {
     document.getElementById('sidebarAdminLink').style.display = 'block';
   }
+}
+
+function toggleThisProjectMenu() {
+  const group = document.getElementById('thisProjectGroup');
+  const caret = document.getElementById('thisProjectCaret');
+  const opening = group.style.display === 'none';
+  group.style.display = opening ? 'flex' : 'none';
+  caret.classList.toggle('open', opening);
 }
 
 function renderKeywordsLine(project) {
