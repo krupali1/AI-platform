@@ -1779,14 +1779,28 @@ def api_run(module_id: str, request: Request, user: User = Depends(require_role(
     engine = None
     rest_conn = None
     if module_id not in NEEDS_USER_KEY and module_id not in RUNNERS:
-        engine = session.query(PromptEngine).filter(
+        # Which projects a custom engine/connector actually runs for is
+        # tracked by *Project (a real many-to-many) - client_id on the
+        # engine/connector itself only records which project it happened
+        # to be created from, and explicitly "doesn't control where it
+        # runs" (see RestConnector's docstring). Looking up by client_id
+        # here instead of the *Project join meant a connector created
+        # from one project and then also linked to a second via "Applies
+        # to" would show up correctly in that second project's module
+        # list (which does use the join) but fail to RUN there with
+        # "unknown module" - exactly the bug this fixes.
+        engine = session.query(PromptEngine).join(
+            PromptEngineProject, PromptEngineProject.engine_id == PromptEngine.id
+        ).filter(
             PromptEngine.module_id == module_id,
-            (PromptEngine.client_id == None) | (PromptEngine.client_id == client.id),
+            PromptEngineProject.client_id == client.id,
         ).first()
         if not engine:
-            rest_conn = session.query(RestConnector).filter(
+            rest_conn = session.query(RestConnector).join(
+                RestConnectorProject, RestConnectorProject.connector_id == RestConnector.id
+            ).filter(
                 RestConnector.module_id == module_id,
-                (RestConnector.client_id == None) | (RestConnector.client_id == client.id),
+                RestConnectorProject.client_id == client.id,
             ).first()
         if not engine and not rest_conn:
             session.close()
