@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Project Setup · Client Memory Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --panel-raised: #fbfaf8; --border: #e6e3dd;
+    --text: #1c1b19; --text-muted: #75716a; --accent: #b5651d; --accent-dim: #f0dcc7; --accent-bg: #f6ece2;
+    --good: #1a8a5f; --bad: #c0392b; --bad-bg: #fbeae8;
+    --shadow-sm: 0 1px 2px rgba(28,27,25,0.05), 0 1px 3px rgba(28,27,25,0.06);
+    --shadow-md: 0 4px 10px rgba(28,27,25,0.06), 0 2px 4px rgba(28,27,25,0.05);
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .title { font-family: var(--mono); letter-spacing: 0.04em; font-size: 14px; color: var(--text); font-weight: 600; }
+  a.back {
+    font-family: var(--mono); font-size: 11.5px; color: var(--text-muted);
+    text-decoration: none; border: 1px solid var(--border); padding: 5px 10px; border-radius: 6px;
+  }
+  a.back:hover { color: var(--text); border-color: var(--accent); }
+  .header-create-row { display: flex; gap: 8px; }
+  .header-new-btn {
+    font-family: var(--mono); font-size: 11px; color: #fff;
+    background: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  .header-new-btn:hover { opacity: 0.85; }
+
+  .app-shell { display: flex; min-height: calc(100vh - 57px); }
+  .sidebar {
+    width: 220px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--border); padding: 18px 0;
+  }
+  .sidebar-nav { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+  .sidebar-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-muted); padding: 6px 12px; margin-top: 14px;
+  }
+  .sidebar-label:first-child { margin-top: 0; }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px;
+    color: var(--text); text-decoration: none; font-size: 13px; cursor: pointer;
+    background: transparent; border: none; width: 100%; text-align: left; font-family: var(--sans);
+  }
+  .sidebar-item:hover { background: var(--accent-bg); }
+  .sidebar-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .sidebar-subitem { padding-left: 26px; font-size: 12.5px; }
+  .sidebar-caret { margin-left: auto; color: var(--text-muted); font-size: 10px; transition: transform 0.15s ease; }
+  .sidebar-caret.open { transform: scaleY(-1); }
+  .sidebar-project-row { display: flex; align-items: center; gap: 4px; padding: 4px 8px 10px 12px; }
+  .sidebar-project-name {
+    font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
+    text-decoration: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sidebar-project-name:hover { color: var(--accent); }
+  .sidebar-group-caret-btn {
+    background: none; border: none; cursor: pointer; padding: 4px; color: var(--text-muted);
+    display: flex; align-items: center; border-radius: 4px;
+  }
+  .sidebar-group-caret-btn:hover { background: var(--accent-bg); }
+  #thisProjectGroup { display: flex; flex-direction: column; gap: 2px; }
+  #projectSetupSubmenu { display: flex; flex-direction: column; gap: 2px; }
+  .content-area { flex: 1; min-width: 0; }
+  @media (max-width: 720px) { .sidebar { display: none; } }
+
+  .col-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+    color: var(--text-muted); text-transform: uppercase; margin-bottom: 14px;
+  }
+  .empty-note { color: var(--text-muted); font-size: 12.5px; font-style: italic; }
+
+  .stepper { display: flex; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 24px; }
+  .step-tab {
+    display: flex; align-items: center; gap: 9px;
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 14px 18px; cursor: pointer; font-family: var(--sans);
+  }
+  .step-tab .step-num {
+    display: flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--text-muted); border: 1px solid var(--border);
+  }
+  .step-tab .step-label { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; }
+  .step-tab.done .step-num { color: var(--good); border-color: var(--good); }
+  .step-tab.active { border-bottom-color: var(--accent); }
+  .step-tab.active .step-num { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+  .step-tab.active .step-label { color: var(--text); font-weight: 600; }
+  .step-tab:hover .step-label { color: var(--text); }
+
+  main {
+    display: grid; grid-template-columns: 1fr 44px; gap: 1px;
+    background: var(--border); transition: grid-template-columns 0.2s ease;
+  }
+  main.feed-expanded { grid-template-columns: 1fr 320px; }
+  .step-content { background: var(--bg); padding: 24px; min-height: 400px; }
+  .step-panel { display: none; }
+  .step-panel.active { display: block; }
+  .step-hint { color: var(--text-muted); font-size: 12px; margin: -8px 0 12px; }
+
+  .project-bar {
+    display: flex; align-items: center; gap: 10px; padding: 14px 24px;
+    background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .project-bar select {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 12.5px; padding: 7px 32px 7px 10px; border-radius: 6px;
+    min-width: 200px; -webkit-appearance: none; -moz-appearance: none; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1L5 5L9 1' fill='none' stroke='%2375716a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+  }
+  .project-new-btn {
+    font-family: var(--mono); font-size: 11px; color: #fff;
+    background: var(--text); border: 1px solid var(--text); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  .project-new-btn:hover { opacity: 0.85; }
+  .project-new-form { display: none; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .project-new-form.open { display: flex; }
+  .project-new-form input {
+    background: var(--panel-raised); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 12px; padding: 7px 10px; border-radius: 6px; min-width: 220px;
+  }
+  .project-new-form button.primary {
+    font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--accent);
+    color: #fff; background: var(--accent); border-radius: 6px; padding: 7px 12px; cursor: pointer;
+  }
+  .project-new-form button.primary:hover { opacity: 0.88; }
+  .keywords-line {
+    padding: 8px 24px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--text-muted); background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .keywords-line .kw-label { color: var(--text-muted); }
+  .keywords-line .kw-value { color: var(--text); }
+  .keywords-line .kw-hint { color: var(--text-muted); font-style: italic; }
+
+  .step-next-btn {
+    display: block; margin-top: 22px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--accent); background: var(--panel); border: 1px solid var(--accent);
+    border-radius: 6px; padding: 9px 16px; cursor: pointer; box-shadow: var(--shadow-sm);
+  }
+  .step-next-btn:hover { background: var(--accent-bg); }
+
+  @media (max-width: 720px) {
+    .stepper { padding: 0 12px; overflow-x: auto; }
+    .step-tab .step-label { display: none; }
+  }
+
+  .modules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .module-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+    box-shadow: var(--shadow-sm); display: flex; flex-direction: column; position: relative;
+  }
+  .module-card .row { display: flex; align-items: center; justify-content: space-between; }
+  .card-status-group { display: flex; align-items: center; gap: 4px; }
+  .conn-icon-btn {
+    opacity: 0; transition: opacity 0.12s ease, background 0.12s ease;
+    background: none; border: none; padding: 3px; margin: -3px 0; cursor: pointer;
+    color: var(--text-muted); display: flex; align-items: center; justify-content: center; border-radius: 4px;
+  }
+  .module-card:hover .conn-icon-btn, .conn-icon-btn:focus-visible { opacity: 1; }
+  .conn-icon-edit:hover { color: var(--accent); background: var(--accent-bg); }
+  .conn-icon-delete:hover { color: var(--bad); background: var(--bad-bg); }
+  .module-card .card-fill { flex: 1; }
+  .module-name { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+  .custom-badge {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 3px; padding: 1px 5px; vertical-align: middle;
+  }
+  .agent-delete-btn {
+    width: 100%; margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
+    background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 0; cursor: pointer;
+  }
+  .agent-delete-btn:hover { color: var(--bad); border-color: var(--bad); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+  .status-dot.success { background: var(--good); }
+  .status-dot.error { background: var(--bad); }
+  .status-dot.running { background: var(--accent); animation: pulse 1s infinite; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(28,27,25,0.15); } 70% { box-shadow: 0 0 0 6px rgba(28,27,25,0); } 100% { box-shadow: 0 0 0 0 rgba(28,27,25,0); }
+  }
+  .module-desc { color: var(--text-muted); font-size: 11.5px; margin: 8px 0 10px; line-height: 1.45; }
+  .module-meta { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-bottom: 10px; }
+  .rw-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tag { font-family: var(--mono); font-size: 9.5px; padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border); color: var(--text-muted); }
+  button.run-btn {
+    width: 100%; background: var(--accent); border: 1px solid var(--accent); color: #fff;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.05em; padding: 8px 0;
+    border-radius: 6px; cursor: pointer; transition: opacity 0.15s;
+  }
+  button.run-btn:hover { opacity: 0.88; }
+  button.run-btn:disabled { opacity: 0.5; cursor: default; }
+  .read-only-note { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); text-align: center; padding: 6px 0; }
+  .module-cred-note {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    background: var(--panel-raised); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 9px; margin-top: 8px;
+  }
+  .module-cred-note a { color: var(--accent); }
+
+  .feed-item { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .feed-item:last-child { border-bottom: none; }
+  .feed-time { font-family: var(--mono); font-size: 11px; color: var(--text-muted); white-space: nowrap; padding-top: 1px; }
+  .feed-module { font-family: var(--mono); font-size: 11px; color: var(--accent); white-space: nowrap; padding-top: 1px; }
+  .feed-msg { color: var(--text); line-height: 1.5; }
+  .feed-msg.error { color: var(--bad); }
+  .feed-msg.warning { color: var(--accent); }
+  .feed-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+  .feed-dot.success { background: var(--good); }
+  .feed-dot.warning { background: var(--accent); }
+  .feed-dot.error { background: var(--bad); }
+  #eventFeed { max-height: none; overflow-y: auto; margin-bottom: 0; }
+  .feed-column { position: relative; overflow: hidden; padding: 0; background: var(--panel); display: flex; flex-direction: column; }
+  .feed-column-toggle {
+    position: sticky; top: 0; width: 44px; height: 44px; flex-shrink: 0;
+    background: var(--panel); border: none; border-bottom: 1px solid var(--border);
+    color: var(--text-muted); font-size: 16px; cursor: pointer;
+  }
+  .feed-column-toggle:hover { color: var(--accent); }
+  main.feed-expanded .feed-column-toggle { transform: scaleX(-1); }
+  .feed-column-content { display: none; padding: 16px; overflow-y: auto; flex: 1; }
+  main.feed-expanded .feed-column-content { display: block; }
+  @media (max-width: 720px) {
+    main, main.feed-expanded { grid-template-columns: 1fr; }
+    .feed-column { order: 3; }
+    .feed-column-toggle { width: 100%; height: 36px; }
+  }
+
+  .toast-stack { position: fixed; top: 20px; right: 20px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    font-family: var(--mono); font-size: 12.5px; padding: 10px 16px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+    box-shadow: var(--shadow-md); min-width: 220px; animation: toast-in 0.2s ease-out;
+  }
+  .toast.success { border-color: var(--good); color: var(--good); }
+  .toast.warning { border-color: var(--accent); color: var(--accent); }
+  .toast.error { border-color: var(--bad); color: var(--bad); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(28,27,25,0.4);
+    z-index: 50; align-items: flex-start; justify-content: center; padding: 70px 20px; overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .modal-header h4 { margin: 0; font-family: var(--mono); font-size: 13px; letter-spacing: 0.05em; }
+  .modal-close {
+    background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+    border-radius: 6px; width: 26px; height: 26px; cursor: pointer; font-size: 13px; flex: none !important; padding: 0 !important;
+  }
+  .modal-close:hover { color: var(--text); border-color: var(--text-muted); }
+  .tp-hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin: 0 0 10px; }
+  .tp-advanced-toggle {
+    display: block; width: 100%; background: none; border: none;
+    color: var(--text-muted); font-family: var(--mono); font-size: 10.5px; text-align: left; padding: 8px 0 0; cursor: pointer;
+  }
+  .tp-advanced-toggle:hover { color: var(--text); }
+  .tp-advanced { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .tp-advanced.open { display: block; }
+
+  .agent-form {
+    display: flex !important; flex-direction: column; align-items: stretch !important; gap: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px;
+    box-shadow: var(--shadow-md); width: 100%; max-width: 480px;
+  }
+  .agent-form input[type="text"], .agent-form input[type="password"], .agent-form select, .agent-form textarea {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 10px; border-radius: 6px; box-sizing: border-box;
+  }
+  .agent-form textarea { min-height: 70px; resize: vertical; }
+  .agent-reads, .agent-scope { display: flex; flex-wrap: wrap; gap: 10px; }
+  .agent-reads-label { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .agent-reads label, .agent-scope label {
+    display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+  }
+  .agent-reads input, .agent-scope input { accent-color: var(--accent); min-width: 0 !important; width: auto !important; flex: none !important; }
+  .agent-form .btn-row { display: flex; gap: 8px; }
+  .agent-form .btn-row button { flex: 1; }
+  .project-checklist {
+    display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-raised);
+  }
+  .project-checklist label { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+  .project-checklist input { accent-color: var(--accent); }
+  .project-checklist .empty-note { margin: 0; font-size: 11.5px; }
+  #connHeaderFields { display: flex; flex-direction: column; gap: 8px; }
+  .conn-detect-sample { margin-top: 8px; }
+  .conn-detect-sample pre {
+    white-space: pre-wrap; word-break: break-all; font-family: var(--mono); font-size: 11px; color: var(--text);
+    background: var(--panel-raised); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    max-height: 220px; overflow-y: auto; margin: 0;
+  }
+</style>
+</head>
+<body>
+<div class="toast-stack" id="toastStack"></div>
+
+<header>
+  <div class="title">CLIENT MEMORY CONSOLE <span style="color:var(--text-muted)">·</span> <strong>PROJECT SETUP</strong></div>
+  <div style="display:flex; align-items:center; gap:10px;">
+    <div class="header-create-row">
+      <button class="header-new-btn" onclick="toggleNewAgent()">+ New Agent</button>
+      <button class="header-new-btn" onclick="toggleNewConnector()">+ New Connector</button>
+    </div>
+    <a class="back" href="/">← Console</a>
+  </div>
+</header>
+
+<div class="modal-overlay" id="newAgentOverlay" onclick="if(event.target===this) toggleNewAgent()">
+  <div class="project-new-form agent-form" id="newAgentForm">
+    <div class="modal-header">
+      <h4>New agent</h4>
+      <button class="modal-close" onclick="toggleNewAgent()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;">Available everywhere - pick which project it applies to below, or make it available to every project.</p>
+    <input id="agentName" type="text" placeholder="Agent name (e.g. Risk Tracker)" />
+    <input id="agentDescription" type="text" placeholder="One-line description" />
+    <div class="agent-reads">
+      <span class="agent-reads-label">Reads:</span>
+      <label><input type="checkbox" value="Meeting" checked /> Meetings</label>
+      <label><input type="checkbox" value="Document" checked /> Documents</label>
+      <label><input type="checkbox" value="Decision" /> Decisions</label>
+      <label><input type="checkbox" value="ActionItem" /> Action items</label>
+      <label><input type="checkbox" value="OpenQuestion" /> Open questions</label>
+      <label><input type="checkbox" value="Brief" /> Briefs</label>
+    </div>
+    <textarea id="agentPrompt" placeholder="What should this agent do with the records it reads? e.g. 'List anything that looks like a risk to this engagement succeeding.'"></textarea>
+    <span class="agent-reads-label">Applies to:</span>
+    <div id="agentProjectChecklist" class="project-checklist"></div>
+    <button class="primary" onclick="createAgent()">Create agent</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="newConnectorOverlay" onclick="if(event.target===this) toggleNewConnector()">
+  <div class="project-new-form agent-form" id="newConnectorForm">
+    <div class="modal-header">
+      <h4 id="newConnectorTitle">New connector</h4>
+      <button class="modal-close" onclick="toggleNewConnector()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;">Available everywhere - pick which project it applies to below, or make it available to every project.</p>
+    <select id="connPreset" onchange="applyConnPreset()">
+      <option value="">Custom - pick a known service, or fill in everything below yourself</option>
+    </select>
+    <input id="connName" type="text" placeholder="Connector name (e.g. Slack)" />
+    <input id="connDescription" type="text" placeholder="One-line description" />
+    <span class="agent-reads-label">What does this pull in?</span>
+    <div class="agent-scope">
+      <label><input type="radio" name="connContentType" value="document" checked /> Documents (files, messages, pages)</label>
+      <label><input type="radio" name="connContentType" value="meeting" /> Meetings (calls, recaps, transcripts)</label>
+    </div>
+    <div class="agent-scope">
+      <label><input type="radio" name="connAuth" value="header" checked onchange="toggleConnAuthFields()" /> Static API key</label>
+      <label><input type="radio" name="connAuth" value="google_oauth" onchange="toggleConnAuthFields()" /> Connected Google account</label>
+      <label><input type="radio" name="connAuth" value="oauth_provider" onchange="toggleConnAuthFields()" /> OAuth-connected app</label>
+    </div>
+    <div id="connHeaderFields">
+      <input id="connHeaderName" type="text" placeholder="Header name (e.g. Authorization)" value="Authorization" />
+      <input id="connValuePrefix" type="text" placeholder="Prefix before the key, if any (e.g. 'Bearer ')" />
+      <input id="connTestKey" type="password" placeholder="API key, to test with below (optional if already saved in Team & Keys)" />
+    </div>
+    <div id="connOauthProviderFields" style="display:none;">
+      <select id="connOauthProviderSelect"></select>
+      <p class="tp-hint" style="margin:4px 0;">No providers registered yet? An admin adds one from the Admin page first.</p>
+    </div>
+    <input id="connUrl" type="text" placeholder="Search URL - use {query} for project name, {domain} for client domain, e.g. https://slack.com/api/search.messages?query={query}" />
+    <button type="button" class="tp-advanced-toggle" id="connDetectBtn" onclick="testAndDetectFields()">Test &amp; detect fields</button>
+    <div class="conn-detect-sample" id="connDetectSampleWrap" style="display:none;">
+      <p class="tp-hint" style="margin:4px 0;">Sample record from the live response - field mapping below was guessed from these field names, review before saving.</p>
+      <pre id="connDetectSample"></pre>
+    </div>
+    <button type="button" class="tp-advanced-toggle" onclick="toggleConnAdvanced()" id="connAdvancedToggle">Field mapping (advanced) ▾</button>
+    <div class="tp-advanced" id="connAdvancedFields">
+      <p class="tp-hint" style="margin:4px 0;">Dotted JSON paths into each API response. "results_path" finds the list; the rest are relative to each item in it. A known-service preset, or Test &amp; detect fields above, fills these in for you.</p>
+      <input id="connResultsPath" type="text" placeholder="results_path (e.g. items, or messages.matches)" />
+      <input id="connFieldId" type="text" placeholder="field_id, for dedup (e.g. id)" />
+      <input id="connFieldTitle" type="text" placeholder="field_title (e.g. summary or text)" />
+      <input id="connFieldContent" type="text" placeholder="field_content (e.g. description or text)" />
+      <input id="connFieldUrl" type="text" placeholder="field_url (e.g. htmlLink or permalink)" />
+      <input id="connFieldDate" type="text" placeholder="field_date (e.g. start.dateTime or ts)" />
+    </div>
+    <span class="agent-reads-label">Applies to:</span>
+    <div id="connProjectChecklist" class="project-checklist"></div>
+    <button class="primary" id="newConnectorSubmitBtn" onclick="saveConnector()">Create connector</button>
+  </div>
+</div>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <nav class="sidebar-nav">
+      <div class="sidebar-label">Workspace</div>
+      <a class="sidebar-item" href="/">Dashboard</a>
+      <a class="sidebar-item" id="sidebarAdminLink" href="/admin" style="display:none;">Admin</a>
+      <div class="sidebar-label">This Project</div>
+      <div class="sidebar-project-row">
+        <a class="sidebar-project-name" id="projectTitle" href="/project" title="This project">…</a>
+      </div>
+      <div id="thisProjectGroup">
+        <a class="sidebar-item" href="/repository">Repository</a>
+        <button class="sidebar-item" onclick="toggleProjectSetupMenu()">
+          Project Setup
+          <span class="sidebar-caret open" id="projectSetupCaret">▾</span>
+        </button>
+        <div id="projectSetupSubmenu" style="display:flex;">
+          <a class="sidebar-item sidebar-subitem active" id="stepLink1" href="/setup?step=1">1. Set up project</a>
+          <a class="sidebar-item sidebar-subitem" id="stepLink2" href="/setup?step=2">2. Extract &amp; store</a>
+        </div>
+        <button class="sidebar-item" id="teamKeysSidebarBtn" onclick="window.location.href='/project?team=1'" style="display:none;">Team &amp; Keys</button>
+      </div>
+      <div class="sidebar-label">Account</div>
+      <a class="sidebar-item" href="/auth/logout">Sign out</a>
+    </nav>
+  </aside>
+
+  <div class="content-area">
+    <div class="stepper" id="stepper"></div>
+
+    <main id="mainContent">
+      <div class="step-content">
+
+        <section class="step-panel" id="stepPanel-1" data-step="1">
+          <div class="col-label">Step 1 · Set up your project</div>
+          <div class="project-bar" id="projectBar">
+            <select id="projectSelect" onchange="onProjectSelect(this.value)"></select>
+            <button class="project-new-btn" onclick="toggleEditDomain()">Edit domain</button>
+            <div class="project-new-form" id="editDomainForm">
+              <input id="editDomainInput" type="text" placeholder="Client email domain, e.g. actionhospital.in" />
+              <button class="primary" onclick="saveDomain()">Save</button>
+            </div>
+          </div>
+          <div class="keywords-line" id="keywordsLine"></div>
+          <button class="step-next-btn" onclick="goToStep(2)">Next: Extract &amp; store →</button>
+        </section>
+
+        <section class="step-panel" id="stepPanel-2" data-step="2">
+          <div class="col-label">Step 2 · Extract &amp; store</div>
+          <p class="step-hint">Pull in the meetings and documents that match this project, then have Claude read them.</p>
+          <div id="modules" class="modules-grid"></div>
+        </section>
+
+      </div>
+
+      <aside class="feed-column" id="feedColumn">
+        <button class="feed-column-toggle" id="feedColumnToggle" onclick="toggleFeedColumn()" title="Expand event feed">‹</button>
+        <div class="feed-column-content" id="feedColumnContent">
+          <div class="col-label">Event feed</div>
+          <div id="eventFeed"></div>
+        </div>
+      </aside>
+    </main>
+  </div>
+</div>
+
+<script>
+async function apiFetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthenticated'); }
+  return res;
+}
+
+// FastAPI/Pydantic validation errors (422) send `detail` as a list of
+// {msg, loc, ...} objects, not a string - without this, `body.detail ||
+// fallback` renders a validation error as the literal "[object Object]".
+function formatApiError(body, fallback) {
+  const detail = body && body.detail;
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(e => (e && e.msg) ? `${(e.loc || []).slice(-1)[0] || ''}: ${e.msg}`.trim() : String(e)).join('; ') || fallback;
+  }
+  return fallback;
+}
+
+function timeAgo(iso) {
+  const then = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'));
+  const diff = Math.max(0, (Date.now() - then.getTime()) / 1000);
+  if (diff < 60) return Math.floor(diff) + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+let currentRole = null;
+let currentProjectId = null;
+let allProjects = [];
+
+function toggleProjectSetupMenu() {
+  const submenu = document.getElementById('projectSetupSubmenu');
+  const caret = document.getElementById('projectSetupCaret');
+  const opening = submenu.style.display === 'none';
+  submenu.style.display = opening ? 'flex' : 'none';
+  caret.classList.toggle('open', opening);
+}
+
+async function loadMe() {
+  const res = await apiFetch('/api/me');
+  const me = await res.json();
+  currentRole = me.role;
+  if (me.role === 'admin') {
+    document.getElementById('sidebarAdminLink').style.display = 'block';
+  }
+}
+
+const STEPS = [
+  { id: 1, label: 'Set up project' },
+  { id: 2, label: 'Extract & store' },
+];
+let currentStep = 1;
+
+function goToStep(n) {
+  currentStep = n;
+  document.querySelectorAll('.step-panel').forEach(p => {
+    p.classList.toggle('active', parseInt(p.dataset.step, 10) === n);
+  });
+  document.getElementById('stepLink1').classList.toggle('active', n === 1);
+  document.getElementById('stepLink2').classList.toggle('active', n === 2);
+  renderStepper();
+}
+
+function renderStepper() {
+  const stepper = document.getElementById('stepper');
+  const active = allProjects.find(p => p.id === currentProjectId);
+  const done = {
+    1: !!currentProjectId,
+    2: active ? (active.meetings_count > 0 || active.documents_count > 0) : false,
+  };
+  stepper.innerHTML = STEPS.map(s => `
+    <button class="step-tab ${currentStep === s.id ? 'active' : ''} ${done[s.id] ? 'done' : ''}" onclick="goToStep(${s.id})">
+      <span class="step-num">${done[s.id] && currentStep !== s.id ? '✓' : s.id}</span>
+      <span class="step-label">${s.label}</span>
+    </button>
+  `).join('');
+}
+
+function renderKeywordsLine(project) {
+  const el = document.getElementById('keywordsLine');
+  if (!project) { el.textContent = ''; return; }
+  el.className = 'keywords-line';
+  const nameRule = `title/filename contains "${project.name}"`;
+  if (project.domain) {
+    el.innerHTML = `<span class="kw-label">Matching:</span> <span class="kw-value">${nameRule}, or anyone @${project.domain}</span>`;
+  } else {
+    el.innerHTML = `<span class="kw-label">Matching:</span> <span class="kw-value">${nameRule} only</span> <span class="kw-hint">- add a client domain in "Edit domain" to also match by participant/sharing</span>`;
+  }
+}
+
+async function loadProjects(initialStep) {
+  const [listRes, currentRes] = await Promise.all([
+    apiFetch('/api/projects'),
+    apiFetch('/api/projects/current'),
+  ]);
+  allProjects = await listRes.json();
+  const current = await currentRes.json();
+  currentProjectId = current ? current.id : null;
+
+  const select = document.getElementById('projectSelect');
+  select.innerHTML = allProjects.map(p =>
+    `<option value="${p.id}" ${p.id === currentProjectId ? 'selected' : ''}>${p.name}</option>`
+  ).join('');
+
+  const activeProject = allProjects.find(p => p.id === currentProjectId);
+  document.getElementById('projectTitle').textContent = activeProject ? activeProject.name : 'No project';
+  document.getElementById('teamKeysSidebarBtn').style.display = current && current.my_role === 'admin' ? 'block' : 'none';
+  renderKeywordsLine(activeProject);
+  goToStep(initialStep || (activeProject ? 2 : 1));
+}
+
+async function onProjectSelect(id) {
+  if (!id) return;
+  await apiFetch(`/api/projects/${id}/select`, { method: 'POST' });
+  currentProjectId = parseInt(id, 10);
+  document.getElementById('editDomainForm').classList.remove('open');
+  await loadProjects(currentStep);
+  await refreshAll();
+}
+
+function toggleEditDomain() {
+  const form = document.getElementById('editDomainForm');
+  const opening = !form.classList.contains('open');
+  form.classList.toggle('open', opening);
+  if (opening) {
+    const active = allProjects.find(p => p.id === currentProjectId);
+    document.getElementById('editDomainInput').value = (active && active.domain) || '';
+  }
+}
+
+async function saveDomain() {
+  if (!currentProjectId) return;
+  const domain = document.getElementById('editDomainInput').value.trim();
+  await apiFetch(`/api/projects/${currentProjectId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain }),
+  });
+  document.getElementById('editDomainForm').classList.remove('open');
+  await loadProjects(currentStep);
+}
+
+async function refreshAll() {
+  await fetchModules();
+  await fetchEvents();
+}
+
+function renderProjectChecklist(containerId, checkedIds) {
+  const container = document.getElementById(containerId);
+  if (!allProjects.length) {
+    container.innerHTML = '<p class="empty-note">No projects yet - this will be offered automatically once you create your first one.</p>';
+    return;
+  }
+  const checked = checkedIds || [currentProjectId];
+  container.innerHTML = allProjects.map(p => `
+    <label><input type="checkbox" class="proj-check" value="${p.id}" ${checked.includes(p.id) ? 'checked' : ''} /> ${p.name}</label>
+  `).join('');
+}
+
+async function fetchModules() {
+  const res = await apiFetch('/api/modules');
+  const modules = await res.json();
+  const el = document.getElementById('modules');
+  el.innerHTML = modules.map(m => `
+    <div class="module-card" id="card-${m.module_id}">
+      <div class="row">
+        <span class="module-name">${m.display_name}${m.custom ? ' <span class="custom-badge">custom</span>' : ''}</span>
+        <span class="card-status-group">
+          ${m.connector_id && currentRole !== 'viewer' ? `
+            <button class="conn-icon-btn conn-icon-edit" onclick="openEditConnector(${m.connector_id})" title="Edit connector" aria-label="Edit connector">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+            <button class="conn-icon-btn conn-icon-delete" onclick="deleteConnector(${m.connector_id})" title="Delete connector" aria-label="Delete connector">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            </button>
+          ` : ''}
+          <span class="status-dot ${m.last_status || ''}" id="dot-${m.module_id}"></span>
+        </span>
+      </div>
+      <div class="card-fill">
+        <div class="module-desc">${m.description}</div>
+        <div class="rw-tags">
+          ${m.reads.map(r => `<span class="tag">reads ${r}</span>`).join('')}
+          ${m.writes.map(w => `<span class="tag">writes ${w}</span>`).join('')}
+        </div>
+        <div class="module-meta">${m.last_run ? 'last run ' + timeAgo(m.last_run) : 'never run'}</div>
+      </div>
+      ${m.needs_credential ? `
+        <div class="module-cred-note">Needs a key - <a href="/project?team=1">set in Team &amp; Keys</a></div>
+      ` : ''}
+      ${currentRole === 'viewer'
+        ? '<div class="read-only-note">read-only access</div>'
+        : `<button class="run-btn" id="btn-${m.module_id}" onclick="runModule('${m.module_id}')">RUN</button>`}
+      ${m.engine_id && currentRole !== 'viewer' ? `<button class="agent-delete-btn" onclick="deleteAgent(${m.engine_id})">Delete agent</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function toggleNewAgent() {
+  const overlay = document.getElementById('newAgentOverlay');
+  const opening = !overlay.classList.contains('open');
+  overlay.classList.toggle('open', opening);
+  if (opening) renderProjectChecklist('agentProjectChecklist');
+}
+
+async function createAgent() {
+  const display_name = document.getElementById('agentName').value.trim();
+  const description = document.getElementById('agentDescription').value.trim();
+  const prompt_template = document.getElementById('agentPrompt').value.trim();
+  const reads = Array.from(document.querySelectorAll('.agent-reads input:checked')).map(i => i.value).join(', ');
+  const project_ids = Array.from(document.querySelectorAll('#agentProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+  if (!display_name || !prompt_template || !reads) {
+    alert('Name, at least one "reads" type, and a prompt are all required.');
+    return;
+  }
+  const res = await apiFetch('/api/engines', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ display_name, description, reads, prompt_template, project_ids }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(formatApiError(body, 'Could not create agent'));
+    return;
+  }
+  document.getElementById('agentName').value = '';
+  document.getElementById('agentDescription').value = '';
+  document.getElementById('agentPrompt').value = '';
+  document.getElementById('newAgentOverlay').classList.remove('open');
+  await fetchModules();
+}
+
+async function deleteAgent(engineId) {
+  if (!confirm('Delete this agent? Its past outputs stay in the Repository, but it will stop showing up here.')) return;
+  await apiFetch(`/api/engines/${engineId}`, { method: 'DELETE' });
+  await fetchModules();
+}
+
+let editingConnectorId = null;
+
+async function toggleNewConnector() {
+  const overlay = document.getElementById('newConnectorOverlay');
+  const opening = !overlay.classList.contains('open');
+  if (opening) {
+    // Reached via the "+ New Connector" header button, not the per-card
+    // Edit button - always a fresh create, even if the modal was left
+    // mid-edit last time it closed.
+    editingConnectorId = null;
+    resetConnectorForm();
+    document.getElementById('newConnectorTitle').textContent = 'New connector';
+    document.getElementById('newConnectorSubmitBtn').textContent = 'Create connector';
+    renderProjectChecklist('connProjectChecklist');
+    await loadConnOauthProviders();
+  }
+  overlay.classList.toggle('open', opening);
+}
+
+async function loadConnOauthProviders() {
+  const res = await apiFetch('/api/oauth-providers');
+  const providers = await res.json();
+  const select = document.getElementById('connOauthProviderSelect');
+  select.innerHTML = providers.length
+    ? providers.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
+    : '<option value="">No providers registered yet</option>';
+  return providers;
+}
+
+function resetConnectorForm() {
+  ['connName', 'connDescription', 'connUrl', 'connResultsPath', 'connFieldId', 'connFieldTitle', 'connFieldContent', 'connFieldUrl', 'connFieldDate', 'connTestKey']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('connPreset').value = '';
+  document.getElementById('connHeaderName').value = 'Authorization';
+  document.getElementById('connValuePrefix').value = '';
+  document.querySelector('input[name="connContentType"][value="document"]').checked = true;
+  document.querySelector('input[name="connAuth"][value="header"]').checked = true;
+  toggleConnAuthFields();
+  document.getElementById('connAdvancedFields').classList.remove('open');
+  document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▾';
+  document.getElementById('connDetectSampleWrap').style.display = 'none';
+}
+
+// Edit re-opens the same modal used for creating, pre-filled from this
+// connector's current row - the header name/URL/field mappings are
+// otherwise only ever set once, at creation, with no way to see or fix
+// a mistake short of deleting the connector (and its saved credential
+// along with it) and starting over.
+async function openEditConnector(connectorId) {
+  const connectors = await apiFetch('/api/rest-connectors').then(r => r.json());
+  const conn = connectors.find(c => c.id === connectorId);
+  if (!conn) return;
+
+  editingConnectorId = connectorId;
+  document.getElementById('newConnectorTitle').textContent = `Edit connector: ${conn.display_name}`;
+  document.getElementById('newConnectorSubmitBtn').textContent = 'Save changes';
+  document.getElementById('connPreset').value = '';
+  document.getElementById('connTestKey').value = '';
+  document.getElementById('connDetectSampleWrap').style.display = 'none';
+
+  document.getElementById('connName').value = conn.display_name;
+  document.getElementById('connDescription').value = conn.description || '';
+  document.querySelector(`input[name="connContentType"][value="${conn.content_type}"]`).checked = true;
+  document.querySelector(`input[name="connAuth"][value="${conn.auth_style}"]`).checked = true;
+  document.getElementById('connHeaderName').value = conn.auth_header_name || 'Authorization';
+  document.getElementById('connValuePrefix').value = conn.auth_value_prefix || '';
+  document.getElementById('connUrl').value = conn.search_url_template || '';
+  document.getElementById('connResultsPath').value = conn.results_path || '';
+  document.getElementById('connFieldId').value = conn.field_id || '';
+  document.getElementById('connFieldTitle').value = conn.field_title || '';
+  document.getElementById('connFieldContent').value = conn.field_content || '';
+  document.getElementById('connFieldUrl').value = conn.field_url || '';
+  document.getElementById('connFieldDate').value = conn.field_date || '';
+  document.getElementById('connAdvancedFields').classList.add('open');
+  document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▴';
+  toggleConnAuthFields();
+
+  const providers = await loadConnOauthProviders();
+  if (conn.auth_style === 'oauth_provider' && providers.length) {
+    document.getElementById('connOauthProviderSelect').value = conn.oauth_provider_id;
+  }
+  renderProjectChecklist('connProjectChecklist', conn.project_ids);
+
+  document.getElementById('newConnectorOverlay').classList.add('open');
+}
+
+function toggleConnAuthFields() {
+  const style = document.querySelector('input[name="connAuth"]:checked').value;
+  document.getElementById('connHeaderFields').style.display = style === 'header' ? 'flex' : 'none';
+  document.getElementById('connOauthProviderFields').style.display = style === 'oauth_provider' ? 'block' : 'none';
+}
+
+// Field mapping is different for every service - it's a dotted path
+// into that service's own JSON response shape, and there's no
+// universal shape to assume (Fathom's title field isn't named the same
+// thing as Google Calendar's). A preset just means someone already did
+// that mapping once for a well-known API; picking one fills in
+// everything below exactly like Test & detect fields would, without
+// needing a live credential to test against first.
+const CONNECTOR_PRESETS = {
+  calendar: {
+    name: 'Google Calendar',
+    description: 'Pulls calendar events matching the project name, via the connected Google account.',
+    content_type: 'document',
+    auth_style: 'google_oauth',
+    url: 'https://www.googleapis.com/calendar/v3/calendars/primary/events?q={query}',
+    results_path: 'items',
+    field_id: 'id',
+    field_title: 'summary',
+    field_content: 'description',
+    field_url: 'htmlLink',
+    field_date: 'start.dateTime',
+  },
+  fathom: {
+    name: 'Fathom',
+    description: "Pulls meeting recaps for anyone at the client's domain.",
+    content_type: 'meeting',
+    auth_style: 'header',
+    auth_header_name: 'X-Api-Key',
+    auth_value_prefix: '',
+    url: 'https://api.fathom.ai/external/v1/meetings?calendar_invitees_domains[]={domain}&include_summary=true&limit=10',
+    results_path: 'items',
+    field_id: 'recording_id',
+    field_title: 'meeting_title',
+    field_content: 'default_summary.markdown_formatted',
+    field_url: 'share_url',
+    field_date: 'recording_start_time',
+  },
+};
+
+function populateConnPresetOptions() {
+  const select = document.getElementById('connPreset');
+  const custom = select.querySelector('option[value=""]');
+  select.innerHTML = '';
+  select.appendChild(custom);
+  Object.entries(CONNECTOR_PRESETS).forEach(([key, preset]) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = `${preset.name} - ${preset.description}`;
+    select.appendChild(opt);
+  });
+}
+
+function applyConnPreset() {
+  const key = document.getElementById('connPreset').value;
+  if (!key) return;
+  const preset = CONNECTOR_PRESETS[key];
+  const nameInput = document.getElementById('connName');
+  const descInput = document.getElementById('connDescription');
+  if (!nameInput.value.trim()) nameInput.value = preset.name;
+  if (!descInput.value.trim()) descInput.value = preset.description;
+  document.querySelector(`input[name="connContentType"][value="${preset.content_type}"]`).checked = true;
+  document.querySelector(`input[name="connAuth"][value="${preset.auth_style}"]`).checked = true;
+  if (preset.auth_style === 'header') {
+    document.getElementById('connHeaderName').value = preset.auth_header_name || 'Authorization';
+    document.getElementById('connValuePrefix').value = preset.auth_value_prefix || '';
+  }
+  toggleConnAuthFields();
+  document.getElementById('connUrl').value = preset.url;
+  document.getElementById('connResultsPath').value = preset.results_path;
+  document.getElementById('connFieldId').value = preset.field_id;
+  document.getElementById('connFieldTitle').value = preset.field_title;
+  document.getElementById('connFieldContent').value = preset.field_content;
+  document.getElementById('connFieldUrl').value = preset.field_url;
+  document.getElementById('connFieldDate').value = preset.field_date;
+  // Expand the advanced section so someone curious can see exactly what
+  // got filled in, without ever having had to type it themselves.
+  document.getElementById('connAdvancedFields').classList.add('open');
+  document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▴';
+}
+
+// Fetches the real API live (using a saved credential if editing an
+// existing connector, or the one-off key just typed in otherwise -
+// never persisted from here) and fills in results_path plus the field
+// mappings from a best-effort guess at the actual response shape, so a
+// service with no preset doesn't need any of it typed by hand either.
+async function testAndDetectFields() {
+  const search_url_template = document.getElementById('connUrl').value.trim();
+  if (!search_url_template) {
+    alert('Enter a search URL first.');
+    return;
+  }
+  const auth_style = document.querySelector('input[name="connAuth"]:checked').value;
+  const auth_header_name = document.getElementById('connHeaderName').value.trim();
+  const auth_value_prefix = document.getElementById('connValuePrefix').value;
+  const test_key = document.getElementById('connTestKey').value.trim();
+  const oauth_provider_id = auth_style === 'oauth_provider'
+    ? parseInt(document.getElementById('connOauthProviderSelect').value, 10) || null
+    : null;
+
+  const btn = document.getElementById('connDetectBtn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  try {
+    const res = await apiFetch('/api/rest-connectors/detect-fields', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        search_url_template, auth_style, auth_header_name, auth_value_prefix,
+        oauth_provider_id, connector_id: editingConnectorId, test_key: test_key || null,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      alert(formatApiError(body, 'Test request failed'));
+      return;
+    }
+    if (!body.suggested_fields) {
+      alert("Connected, but couldn't find a list of records in the response - check the URL, or fill in results_path manually.");
+      return;
+    }
+    document.getElementById('connResultsPath').value = body.results_path || '';
+    document.getElementById('connFieldId').value = body.suggested_fields.field_id || '';
+    document.getElementById('connFieldTitle').value = body.suggested_fields.field_title || '';
+    document.getElementById('connFieldContent').value = body.suggested_fields.field_content || '';
+    document.getElementById('connFieldUrl').value = body.suggested_fields.field_url || '';
+    document.getElementById('connFieldDate').value = body.suggested_fields.field_date || '';
+    document.getElementById('connAdvancedFields').classList.add('open');
+    document.getElementById('connAdvancedToggle').textContent = 'Field mapping (advanced) ▴';
+    document.getElementById('connDetectSample').textContent = JSON.stringify(body.sample_item, null, 2);
+    document.getElementById('connDetectSampleWrap').style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+function toggleConnAdvanced() {
+  const el = document.getElementById('connAdvancedFields');
+  const opening = !el.classList.contains('open');
+  el.classList.toggle('open', opening);
+  document.getElementById('connAdvancedToggle').textContent = `Field mapping (advanced) ${opening ? '▴' : '▾'}`;
+}
+
+async function saveConnector() {
+  const display_name = document.getElementById('connName').value.trim();
+  const description = document.getElementById('connDescription').value.trim();
+  const content_type = document.querySelector('input[name="connContentType"]:checked').value;
+  const search_url_template = document.getElementById('connUrl').value.trim();
+  const auth_style = document.querySelector('input[name="connAuth"]:checked').value;
+  const auth_header_name = document.getElementById('connHeaderName').value.trim();
+  const auth_value_prefix = document.getElementById('connValuePrefix').value;
+  const oauth_provider_id = auth_style === 'oauth_provider'
+    ? parseInt(document.getElementById('connOauthProviderSelect').value, 10) || null
+    : null;
+  const results_path = document.getElementById('connResultsPath').value.trim();
+  const field_id = document.getElementById('connFieldId').value.trim();
+  const field_title = document.getElementById('connFieldTitle').value.trim();
+  const field_content = document.getElementById('connFieldContent').value.trim();
+  const field_url = document.getElementById('connFieldUrl').value.trim();
+  const field_date = document.getElementById('connFieldDate').value.trim();
+  const project_ids = Array.from(document.querySelectorAll('#connProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+
+  if (!display_name || !search_url_template || !results_path) {
+    alert('Name, search URL, and results_path are all required.');
+    return;
+  }
+  if (auth_style === 'oauth_provider' && !oauth_provider_id) {
+    alert('Pick an OAuth provider - if none are listed, an admin needs to register one first.');
+    return;
+  }
+  const isEdit = editingConnectorId !== null;
+  const res = await apiFetch(isEdit ? `/api/rest-connectors/${editingConnectorId}` : '/api/rest-connectors', {
+    method: isEdit ? 'PATCH' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      display_name, description, content_type, search_url_template, auth_style, auth_header_name, auth_value_prefix,
+      oauth_provider_id, results_path, field_id, field_title, field_content, field_url, field_date, project_ids,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(formatApiError(body, isEdit ? 'Could not save changes' : 'Could not create connector'));
+    return;
+  }
+  editingConnectorId = null;
+  resetConnectorForm();
+  document.getElementById('newConnectorOverlay').classList.remove('open');
+  await fetchModules();
+}
+
+async function deleteConnector(connectorId) {
+  if (!confirm('Delete this connector? Records it already synced stay in the Repository, but it will stop showing up here.')) return;
+  await apiFetch(`/api/rest-connectors/${connectorId}`, { method: 'DELETE' });
+  await fetchModules();
+}
+
+async function runModule(id) {
+  const btn = document.getElementById('btn-' + id);
+  const dot = document.getElementById('dot-' + id);
+  btn.disabled = true; btn.textContent = 'RUNNING…';
+  dot.className = 'status-dot running';
+  try {
+    const res = await apiFetch('/api/run/' + id, { method: 'POST' });
+    const body = await res.json();
+    if (body.error) {
+      showToast('error', `${id}: ${body.error}`);
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = 'RUN';
+    fetchModules();
+    await fetchEvents();
+    const latest = lastEvents.find(e => e.module_id === id);
+    if (latest && latest.status !== 'error') {
+      showToast(latest.status, `${id}: ${shortLabel(latest)}`);
+    }
+  }
+}
+
+let lastEvents = [];
+
+function toggleFeedColumn() {
+  const expanded = document.getElementById('mainContent').classList.toggle('feed-expanded');
+  const btn = document.getElementById('feedColumnToggle');
+  btn.title = expanded ? 'Collapse event feed' : 'Expand event feed';
+}
+
+function shortLabel(e) {
+  if (e.status === 'error') return 'Failed - see event feed for details';
+  if (e.status === 'warning') return 'Completed with a warning - see event feed for details';
+  const m = e.message.match(/^(Synced \d+ new \w+\(s\)|Summarized \d+ record\(s\)[^(]*|Demo mode - generated \d+ sample \w+\(s\))/);
+  return m ? m[1] : 'Completed';
+}
+
+async function fetchEvents() {
+  const res = await apiFetch('/api/events');
+  lastEvents = await res.json();
+  renderEvents();
+}
+
+function renderEvents() {
+  const el = document.getElementById('eventFeed');
+  if (!lastEvents.length) {
+    el.innerHTML = '<div class="empty-note">No runs yet. Run a module to populate the feed.</div>';
+    return;
+  }
+  el.innerHTML = lastEvents.map(e => `
+    <div class="feed-item">
+      <span class="feed-dot ${e.status}"></span>
+      <span class="feed-time">${timeAgo(e.created_at)}</span>
+      <span class="feed-module">${e.module_id}</span>
+      <span class="feed-msg ${e.status}">${e.message}</span>
+    </div>
+  `).join('');
+}
+
+function showToast(status, text) {
+  const stack = document.getElementById('toastStack');
+  const toast = document.createElement('div');
+  toast.className = `toast ${status}`;
+  toast.textContent = text;
+  stack.appendChild(toast);
+  setTimeout(() => toast.remove(), 4500);
+}
+
+(async function start() {
+  const params = new URLSearchParams(window.location.search);
+  const stepParam = parseInt(params.get('step'), 10);
+  await loadMe();
+  await loadProjects(stepParam || null);
+  fetchModules();
+  fetchEvents();
+  setInterval(fetchEvents, 5000);
+  populateConnPresetOptions();
+  window.history.replaceState({}, '', '/setup');
+})();
+</script>
+</body>
+</html>

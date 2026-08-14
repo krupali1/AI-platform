@@ -731,7 +731,7 @@ def clear_drive_credentials(project_id: int, user: User = Depends(require_role("
 async def drive_connect_callback(request: Request):
     project_id = request.session.get("drive_auth_project_id")
     if not project_id:
-        return RedirectResponse(url="/?error=drive_connect_expired")
+        return RedirectResponse(url="/project?error=drive_connect_expired")
 
     token = await oauth.google.authorize_access_token(request)
     userinfo = token.get("userinfo") or {}
@@ -741,7 +741,7 @@ async def drive_connect_callback(request: Request):
     project = session.query(Client).filter_by(id=project_id).first()
     if not project:
         session.close()
-        return RedirectResponse(url="/")
+        return RedirectResponse(url="/project")
 
     project.drive_oauth_email = userinfo.get("email")
     project.encrypted_drive_access_token = encrypt(token["access_token"])
@@ -756,7 +756,11 @@ async def drive_connect_callback(request: Request):
     session.commit()
     session.close()
     request.session.pop("drive_auth_project_id", None)
-    return RedirectResponse(url="/")
+    # Google Account connection status is shown in the Team & Keys modal,
+    # which now lives on /project rather than on the old single-page
+    # dashboard - land back there, with the modal auto-opening (see
+    # project.html's start()) so the result is immediately visible.
+    return RedirectResponse(url="/project?team=1")
 
 
 @app.get("/drive/connect/{project_id}")
@@ -962,9 +966,24 @@ def portal_summary(user: User = Depends(get_current_user)):
 
 @app.get("/projects")
 def projects_page(request: Request):
+    # Superseded by "/" (Dashboard now doubles as the all-projects list) -
+    # kept as a redirect, not removed outright, so any old bookmark or
+    # link to this URL still lands somewhere real.
+    return RedirectResponse(url="/")
+
+
+@app.get("/project")
+def project_page(request: Request):
     if not request.session.get("user_id"):
         return RedirectResponse(url="/login")
-    return FileResponse("../frontend/projects.html")
+    return FileResponse("../frontend/project.html")
+
+
+@app.get("/setup")
+def setup_page(request: Request):
+    if not request.session.get("user_id"):
+        return RedirectResponse(url="/login")
+    return FileResponse("../frontend/setup.html")
 
 
 @app.get("/admin")
@@ -1615,20 +1634,20 @@ def oauth_provider_callback(request: Request, code: str = None, state: str = Non
     provider_id = request.session.get("oauth_provider_id")
     project_id = request.session.get("oauth_project_id")
     if error or not code or not state or state != expected_state or not provider_id or not project_id:
-        return RedirectResponse(url="/?error=oauth_connect_failed")
+        return RedirectResponse(url="/project?error=oauth_connect_failed")
 
     session = SessionLocal()
     provider = session.query(OAuthProvider).filter_by(id=provider_id).first()
     if not provider:
         session.close()
-        return RedirectResponse(url="/?error=oauth_connect_failed")
+        return RedirectResponse(url="/project?error=oauth_connect_failed")
 
     redirect_uri = str(request.url_for("oauth_provider_callback"))
     try:
         access_token, refresh_token, expires_in = oauth_generic.exchange_code(provider, code, redirect_uri)
     except Exception:
         session.close()
-        return RedirectResponse(url="/?error=oauth_connect_failed")
+        return RedirectResponse(url="/project?error=oauth_connect_failed")
 
     connection = session.query(OAuthConnection).filter_by(provider_id=provider_id, client_id=project_id).first()
     if not connection:
@@ -1646,7 +1665,9 @@ def oauth_provider_callback(request: Request, code: str = None, state: str = Non
     request.session.pop("oauth_state", None)
     request.session.pop("oauth_provider_id", None)
     request.session.pop("oauth_project_id", None)
-    return RedirectResponse(url="/")
+    # Connector connection status shows in the Team & Keys modal, now on
+    # /project - land there with it auto-opened (see project.html's start()).
+    return RedirectResponse(url="/project?team=1")
 
 
 NEEDS_USER_KEY = {"extraction-engine", "brief-generator", "contradiction-detector"}

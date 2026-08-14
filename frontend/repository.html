@@ -140,11 +140,10 @@
     <nav class="sidebar-nav">
       <div class="sidebar-label">Workspace</div>
       <a class="sidebar-item" href="/">Dashboard</a>
-      <a class="sidebar-item" href="/projects">All Projects</a>
       <a class="sidebar-item" id="sidebarAdminLink" href="/admin" style="display:none;">Admin</a>
       <div class="sidebar-label">This Project</div>
       <div class="sidebar-project-row">
-        <a class="sidebar-project-name" id="projectTitle" href="/?expand=1" title="Back to project">…</a>
+        <a class="sidebar-project-name" id="projectTitle" href="/project" title="This project">…</a>
         <button class="sidebar-group-caret-btn" id="thisProjectCaretBtn" onclick="toggleThisProjectMenu()" title="Collapse/expand">
           <span class="sidebar-caret" id="thisProjectCaret">▾</span>
         </button>
@@ -156,9 +155,8 @@
           <span class="sidebar-caret" id="projectSetupCaret">▾</span>
         </button>
         <div id="projectSetupSubmenu" style="display:none;">
-          <a class="sidebar-item sidebar-subitem" href="/?step=1">1. Set up project</a>
-          <a class="sidebar-item sidebar-subitem" href="/?step=2">2. Extract &amp; store</a>
-          <a class="sidebar-item sidebar-subitem" href="/?step=3">Ask &amp; Search</a>
+          <a class="sidebar-item sidebar-subitem" href="/setup?step=1">1. Set up project</a>
+          <a class="sidebar-item sidebar-subitem" href="/setup?step=2">2. Extract &amp; store</a>
         </div>
       </div>
       <div class="sidebar-label">Account</div>
