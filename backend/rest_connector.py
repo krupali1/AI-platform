@@ -235,7 +235,18 @@ def run_rest_connector(session, client, connector):
     try:
         url = _build_url(connector.search_url_template, client.name, client.domain)
         resp = requests.get(url, headers=auth_header, timeout=20)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.exceptions.HTTPError:
+            # The default HTTPError message is just the status line
+            # ("400 Client Error: Bad Request for url: ...") - it drops
+            # whatever explanation the API actually put in the response
+            # body, which is almost always the one piece of information
+            # that says why a request was rejected. Re-raised with that
+            # body (truncated) instead, so the Event log shows the real
+            # reason instead of a generic status line with no detail.
+            detail = (resp.text or "")[:300]
+            raise RuntimeError(f"{resp.status_code} error from {connector.display_name}: {detail}") from None
         body = resp.json()
         results = _get_path(body, connector.results_path)
         if not isinstance(results, list):
