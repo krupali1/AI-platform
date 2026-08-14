@@ -150,14 +150,7 @@
       </div>
       <div id="thisProjectGroup">
         <a class="sidebar-item" href="/repository">Repository</a>
-        <button class="sidebar-item" onclick="toggleProjectSetupMenu()">
-          Project Setup
-          <span class="sidebar-caret" id="projectSetupCaret">▾</span>
-        </button>
-        <div id="projectSetupSubmenu" style="display:none;">
-          <a class="sidebar-item sidebar-subitem" href="/setup?step=1">1. Set up project</a>
-          <a class="sidebar-item sidebar-subitem" href="/setup?step=2">2. Extract &amp; store</a>
-        </div>
+        <a class="sidebar-item" href="/setup">Project Setup</a>
       </div>
       <div class="sidebar-label">Account</div>
       <a class="sidebar-item" href="/auth/logout">Sign out</a>
@@ -344,14 +337,6 @@ async function loadCurrentProject() {
   const res = await apiFetch('/api/projects/current');
   const current = await res.json();
   document.getElementById('projectTitle').textContent = current ? current.name : 'No project';
-}
-
-function toggleProjectSetupMenu() {
-  const submenu = document.getElementById('projectSetupSubmenu');
-  const caret = document.getElementById('projectSetupCaret');
-  const opening = submenu.style.display === 'none';
-  submenu.style.display = opening ? 'flex' : 'none';
-  caret.classList.toggle('open', opening);
 }
 
 function toggleThisProjectMenu() {

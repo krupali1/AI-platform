@@ -79,33 +79,12 @@
   }
   .empty-note { color: var(--text-muted); font-size: 12.5px; font-style: italic; }
 
-  .stepper { display: flex; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 24px; }
-  .step-tab {
-    display: flex; align-items: center; gap: 9px;
-    background: transparent; border: none; border-bottom: 2px solid transparent;
-    padding: 14px 18px; cursor: pointer; font-family: var(--sans);
-  }
-  .step-tab .step-num {
-    display: flex; align-items: center; justify-content: center;
-    width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-    font-family: var(--mono); font-size: 11px; font-weight: 600;
-    color: var(--text-muted); border: 1px solid var(--border);
-  }
-  .step-tab .step-label { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; }
-  .step-tab.done .step-num { color: var(--good); border-color: var(--good); }
-  .step-tab.active { border-bottom-color: var(--accent); }
-  .step-tab.active .step-num { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
-  .step-tab.active .step-label { color: var(--text); font-weight: 600; }
-  .step-tab:hover .step-label { color: var(--text); }
-
   main {
     display: grid; grid-template-columns: 1fr 44px; gap: 1px;
     background: var(--border); transition: grid-template-columns 0.2s ease;
   }
   main.feed-expanded { grid-template-columns: 1fr 320px; }
   .step-content { background: var(--bg); padding: 24px; min-height: 400px; }
-  .step-panel { display: none; }
-  .step-panel.active { display: block; }
   .step-hint { color: var(--text-muted); font-size: 12px; margin: -8px 0 12px; }
 
   .project-bar {
@@ -143,18 +122,6 @@
   .keywords-line .kw-label { color: var(--text-muted); }
   .keywords-line .kw-value { color: var(--text); }
   .keywords-line .kw-hint { color: var(--text-muted); font-style: italic; }
-
-  .step-next-btn {
-    display: block; margin-top: 22px; font-family: var(--mono); font-size: 11.5px;
-    color: var(--accent); background: var(--panel); border: 1px solid var(--accent);
-    border-radius: 6px; padding: 9px 16px; cursor: pointer; box-shadow: var(--shadow-sm);
-  }
-  .step-next-btn:hover { background: var(--accent-bg); }
-
-  @media (max-width: 720px) {
-    .stepper { padding: 0 12px; overflow-x: auto; }
-    .step-tab .step-label { display: none; }
-  }
 
   .modules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
   .module-card {
@@ -406,14 +373,7 @@
       </div>
       <div id="thisProjectGroup">
         <a class="sidebar-item" href="/repository">Repository</a>
-        <button class="sidebar-item" onclick="toggleProjectSetupMenu()">
-          Project Setup
-          <span class="sidebar-caret open" id="projectSetupCaret">▾</span>
-        </button>
-        <div id="projectSetupSubmenu" style="display:flex;">
-          <a class="sidebar-item sidebar-subitem active" id="stepLink1" href="/setup?step=1">1. Set up project</a>
-          <a class="sidebar-item sidebar-subitem" id="stepLink2" href="/setup?step=2">2. Extract &amp; store</a>
-        </div>
+        <a class="sidebar-item active" href="/setup">Project Setup</a>
         <button class="sidebar-item" id="teamKeysSidebarBtn" onclick="window.location.href='/project?team=1'" style="display:none;">Team &amp; Keys</button>
       </div>
       <div class="sidebar-label">Account</div>
@@ -422,13 +382,11 @@
   </aside>
 
   <div class="content-area">
-    <div class="stepper" id="stepper"></div>
-
     <main id="mainContent">
       <div class="step-content">
 
-        <section class="step-panel" id="stepPanel-1" data-step="1">
-          <div class="col-label">Step 1 · Set up your project</div>
+        <section id="setupPanel">
+          <div class="col-label">Set up your project</div>
           <div class="project-bar" id="projectBar">
             <select id="projectSelect" onchange="onProjectSelect(this.value)"></select>
             <button class="project-new-btn" onclick="toggleEditDomain()">Edit domain</button>
@@ -438,11 +396,8 @@
             </div>
           </div>
           <div class="keywords-line" id="keywordsLine"></div>
-          <button class="step-next-btn" onclick="goToStep(2)">Next: Extract &amp; store →</button>
-        </section>
 
-        <section class="step-panel" id="stepPanel-2" data-step="2">
-          <div class="col-label">Step 2 · Extract &amp; store</div>
+          <div class="col-label" style="margin-top:28px;">Extract &amp; store</div>
           <p class="step-hint">Pull in the meetings and documents that match this project, then have Claude read them.</p>
           <div id="modules" class="modules-grid"></div>
         </section>
@@ -493,14 +448,6 @@ let currentRole = null;
 let currentProjectId = null;
 let allProjects = [];
 
-function toggleProjectSetupMenu() {
-  const submenu = document.getElementById('projectSetupSubmenu');
-  const caret = document.getElementById('projectSetupCaret');
-  const opening = submenu.style.display === 'none';
-  submenu.style.display = opening ? 'flex' : 'none';
-  caret.classList.toggle('open', opening);
-}
-
 async function loadMe() {
   const res = await apiFetch('/api/me');
   const me = await res.json();
@@ -508,37 +455,6 @@ async function loadMe() {
   if (me.role === 'admin') {
     document.getElementById('sidebarAdminLink').style.display = 'block';
   }
-}
-
-const STEPS = [
-  { id: 1, label: 'Set up project' },
-  { id: 2, label: 'Extract & store' },
-];
-let currentStep = 1;
-
-function goToStep(n) {
-  currentStep = n;
-  document.querySelectorAll('.step-panel').forEach(p => {
-    p.classList.toggle('active', parseInt(p.dataset.step, 10) === n);
-  });
-  document.getElementById('stepLink1').classList.toggle('active', n === 1);
-  document.getElementById('stepLink2').classList.toggle('active', n === 2);
-  renderStepper();
-}
-
-function renderStepper() {
-  const stepper = document.getElementById('stepper');
-  const active = allProjects.find(p => p.id === currentProjectId);
-  const done = {
-    1: !!currentProjectId,
-    2: active ? (active.meetings_count > 0 || active.documents_count > 0) : false,
-  };
-  stepper.innerHTML = STEPS.map(s => `
-    <button class="step-tab ${currentStep === s.id ? 'active' : ''} ${done[s.id] ? 'done' : ''}" onclick="goToStep(${s.id})">
-      <span class="step-num">${done[s.id] && currentStep !== s.id ? '✓' : s.id}</span>
-      <span class="step-label">${s.label}</span>
-    </button>
-  `).join('');
 }
 
 function renderKeywordsLine(project) {
@@ -553,7 +469,7 @@ function renderKeywordsLine(project) {
   }
 }
 
-async function loadProjects(initialStep) {
+async function loadProjects() {
   const [listRes, currentRes] = await Promise.all([
     apiFetch('/api/projects'),
     apiFetch('/api/projects/current'),
@@ -571,7 +487,6 @@ async function loadProjects(initialStep) {
   document.getElementById('projectTitle').textContent = activeProject ? activeProject.name : 'No project';
   document.getElementById('teamKeysSidebarBtn').style.display = current && current.my_role === 'admin' ? 'block' : 'none';
   renderKeywordsLine(activeProject);
-  goToStep(initialStep || (activeProject ? 2 : 1));
 }
 
 async function onProjectSelect(id) {
@@ -579,7 +494,7 @@ async function onProjectSelect(id) {
   await apiFetch(`/api/projects/${id}/select`, { method: 'POST' });
   currentProjectId = parseInt(id, 10);
   document.getElementById('editDomainForm').classList.remove('open');
-  await loadProjects(currentStep);
+  await loadProjects();
   await refreshAll();
 }
 
@@ -602,7 +517,7 @@ async function saveDomain() {
     body: JSON.stringify({ domain }),
   });
   document.getElementById('editDomainForm').classList.remove('open');
-  await loadProjects(currentStep);
+  await loadProjects();
 }
 
 async function refreshAll() {
@@ -1058,15 +973,12 @@ function showToast(status, text) {
 }
 
 (async function start() {
-  const params = new URLSearchParams(window.location.search);
-  const stepParam = parseInt(params.get('step'), 10);
   await loadMe();
-  await loadProjects(stepParam || null);
+  await loadProjects();
   fetchModules();
   fetchEvents();
   setInterval(fetchEvents, 5000);
   populateConnPresetOptions();
-  window.history.replaceState({}, '', '/setup');
 })();
 </script>
 </body>
