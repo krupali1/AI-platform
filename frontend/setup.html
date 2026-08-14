@@ -35,6 +35,12 @@
     padding: 7px 12px; cursor: pointer;
   }
   .header-new-btn:hover { opacity: 0.85; }
+  .header-right-actions { position: relative; display: flex; align-items: center; gap: 8px; }
+  .header-dropdown {
+    position: absolute; top: 100%; right: 0; margin-top: 6px; z-index: 20;
+    background: var(--panel); box-shadow: var(--shadow-md); padding: 12px; border-radius: 8px;
+    flex-direction: column !important; align-items: stretch !important; min-width: 260px;
+  }
 
   .app-shell { display: flex; min-height: calc(100vh - 57px); }
   .sidebar {
@@ -274,12 +280,17 @@
 
 <header>
   <div class="title">CLIENT MEMORY CONSOLE <span style="color:var(--text-muted)">·</span> <strong>PROJECT SETUP</strong></div>
-  <div style="display:flex; align-items:center; gap:10px;">
+  <div class="header-right-actions">
     <div class="header-create-row">
+      <button class="header-new-btn" id="newProjectBtn" onclick="toggleNewProject()">+ New Project</button>
       <button class="header-new-btn" onclick="toggleNewAgent()">+ New Agent</button>
       <button class="header-new-btn" onclick="toggleNewConnector()">+ New Connector</button>
     </div>
-    <a class="back" href="/">← Console</a>
+    <div class="project-new-form header-dropdown" id="projectNewForm">
+      <input id="newProjectName" type="text" placeholder="Project name (e.g. LKS Law Firm)" />
+      <input id="newProjectDomain" type="text" placeholder="Client email domain, optional (e.g. lksfirm.com)" />
+      <button class="primary" onclick="createProject()">Create</button>
+    </div>
   </div>
 </header>
 
@@ -534,6 +545,37 @@ async function saveDomain() {
 async function refreshAll() {
   await fetchModules();
   await fetchEvents();
+}
+
+function toggleNewProject() {
+  document.getElementById('projectNewForm').classList.toggle('open');
+}
+
+document.addEventListener('click', function(e) {
+  const form = document.getElementById('projectNewForm');
+  const btn = document.getElementById('newProjectBtn');
+  if (form.classList.contains('open') && !form.contains(e.target) && e.target !== btn) {
+    form.classList.remove('open');
+  }
+});
+
+async function createProject() {
+  const name = document.getElementById('newProjectName').value.trim();
+  const domain = document.getElementById('newProjectDomain').value.trim();
+  if (!name) return;
+  const res = await apiFetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, domain }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(formatApiError(body, 'Could not create project'));
+    return;
+  }
+  const newProject = await res.json();
+  await apiFetch(`/api/projects/${newProject.id}/select`, { method: 'POST' });
+  window.location.href = '/project';
 }
 
 function renderProjectChecklist(containerId, checkedIds) {
