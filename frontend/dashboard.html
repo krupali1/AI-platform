@@ -331,8 +331,19 @@
     box-shadow: var(--shadow-sm);
     display: flex;
     flex-direction: column;
+    position: relative;
   }
   .module-card .row { display: flex; align-items: center; justify-content: space-between; }
+  .card-status-group { display: flex; align-items: center; gap: 4px; }
+  .conn-icon-btn {
+    opacity: 0; transition: opacity 0.12s ease, background 0.12s ease;
+    background: none; border: none; padding: 3px; margin: -3px 0; cursor: pointer;
+    color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+    border-radius: 4px;
+  }
+  .module-card:hover .conn-icon-btn, .conn-icon-btn:focus-visible { opacity: 1; }
+  .conn-icon-edit:hover { color: var(--accent); background: var(--accent-bg); }
+  .conn-icon-delete:hover { color: var(--bad); background: var(--bad-bg, #fbeae8); }
   .module-card .card-fill { flex: 1; }
   .module-name { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
   .custom-badge {
@@ -345,11 +356,6 @@
     background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 0; cursor: pointer;
   }
   .agent-delete-btn:hover { color: var(--bad); border-color: var(--bad); }
-  .agent-edit-btn {
-    width: 100%; margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
-    background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 0; cursor: pointer;
-  }
-  .agent-edit-btn:hover { color: var(--accent); border-color: var(--accent); }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
   .status-dot.success { background: var(--good); }
   .status-dot.error { background: var(--bad); }
@@ -2046,7 +2052,17 @@ async function fetchModules() {
     <div class="module-card" id="card-${m.module_id}">
       <div class="row">
         <span class="module-name">${m.display_name}${m.custom ? ' <span class="custom-badge">custom</span>' : ''}</span>
-        <span class="status-dot ${m.last_status || ''}" id="dot-${m.module_id}"></span>
+        <span class="card-status-group">
+          ${m.connector_id && currentRole !== 'viewer' ? `
+            <button class="conn-icon-btn conn-icon-edit" onclick="openEditConnector(${m.connector_id})" title="Edit connector" aria-label="Edit connector">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+            <button class="conn-icon-btn conn-icon-delete" onclick="deleteConnector(${m.connector_id})" title="Delete connector" aria-label="Delete connector">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            </button>
+          ` : ''}
+          <span class="status-dot ${m.last_status || ''}" id="dot-${m.module_id}"></span>
+        </span>
       </div>
       <div class="card-fill">
         <div class="module-desc">${m.description}</div>
@@ -2063,8 +2079,6 @@ async function fetchModules() {
         ? '<div class="read-only-note">read-only access</div>'
         : `<button class="run-btn" id="btn-${m.module_id}" onclick="runModule('${m.module_id}')">RUN</button>`}
       ${m.engine_id && currentRole !== 'viewer' ? `<button class="agent-delete-btn" onclick="deleteAgent(${m.engine_id})">Delete agent</button>` : ''}
-      ${m.connector_id && currentRole !== 'viewer' ? `<button class="agent-edit-btn" onclick="openEditConnector(${m.connector_id})">Edit connector</button>` : ''}
-      ${m.connector_id && currentRole !== 'viewer' ? `<button class="agent-delete-btn" onclick="deleteConnector(${m.connector_id})">Delete connector</button>` : ''}
     </div>
   `).join('');
 }
