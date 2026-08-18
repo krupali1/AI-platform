@@ -311,13 +311,14 @@ def _drive_oauth_credentials(session, client):
     back - so a run months from now still works without anyone having
     to reconnect, as long as the refresh token is still valid.
 
-    Despite the name, this is shared by Drive, Gmail, and Calendar
-    (gmail-connector and the conn-google-calendar REST connector both
-    import it) - one connected account, one refresh token, all three
-    scopes requested together at connect time. The scopes list below
-    has to list all three or refreshing a token used for the wrong
-    API can end up looking under-scoped even when the actual grant is
-    fine."""
+    Despite the name, this is shared by Drive, Gmail, Calendar, and
+    the meeting-minutes email drafter (gmail-connector, the
+    conn-google-calendar REST connector, and email_connector's
+    create_meeting_draft all import it) - one connected account, one
+    refresh token, all four scopes requested together at connect time.
+    The scopes list below has to list all four or refreshing a token
+    used for the wrong API can end up looking under-scoped even when
+    the actual grant is fine."""
     refresh_token = decrypt(client.encrypted_drive_refresh_token)
     if not refresh_token:
         return None
@@ -335,6 +336,7 @@ def _drive_oauth_credentials(session, client):
         scopes=[
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.compose",
             "https://www.googleapis.com/auth/calendar.readonly",
         ],
     )

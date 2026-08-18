@@ -780,7 +780,7 @@ async def drive_connect(project_id: int, request: Request, user: User = Depends(
     return await oauth.google.authorize_redirect(
         request,
         redirect_uri,
-        scope="openid email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly",
+        scope="openid email https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly",
         access_type="offline",
         prompt="consent",  # forces Google to return a refresh_token every time, not just on first-ever consent
     )
@@ -2077,6 +2077,26 @@ def delete_record(record_type: str, record_id: int, request: Request, user: User
     session.commit()
     session.close()
     return {"ok": True, "cascaded": cascaded}
+
+
+@app.post("/api/meetings/{meeting_id}/draft-email")
+def draft_meeting_email(meeting_id: int, request: Request, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    client = get_current_project(request, session)
+    if not client:
+        session.close()
+        raise HTTPException(400, "No project selected")
+    meeting = session.query(Meeting).filter_by(id=meeting_id, client_id=client.id).first()
+    if not meeting:
+        session.close()
+        raise HTTPException(404, "Meeting not found")
+    try:
+        draft_id = email_connector.create_meeting_draft(session, client, meeting)
+    except Exception as e:
+        session.close()
+        raise HTTPException(400, f"Could not create draft: {e}")
+    session.close()
+    return {"ok": True, "draft_id": draft_id}
 
 
 class BulkDeletePayload(BaseModel):

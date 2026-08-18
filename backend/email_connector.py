@@ -9,17 +9,26 @@ Email, in both directions:
   Drive or Fireflies, so this is a single efficient query rather than
   the bounded scan-and-filter those needed.
 
+- create_meeting_draft: per-meeting, on demand (not a scheduled
+  module). Writes the meeting's minutes into a new Gmail draft in the
+  connected account's own Drafts folder via gmail.compose - review and
+  send happen in Gmail itself, so there's no approval step to build
+  here. Deliberately draft-only, not gmail.send: creating a draft an
+  admin still has to open and click Send is a meaningfully smaller
+  grant than being able to send mail outright.
+
 - run_digest: notification. A separate, much simpler piece - a Resend
   API key per project, and an email address to send to. Reads recent
   events and the latest brief (if one exists) and sends a plain digest.
-  Deliberately not reusing Gmail send scope for this: sending
+  Deliberately not reusing Gmail send scope for this either: sending
   automated mail from a person's own inbox is a different, more
   sensitive thing than reading it, and a dedicated transactional email
   provider is the more normal shape for this regardless.
 
-Connections made before this feature existed only granted
-drive.readonly - calling Gmail with an old token fails with a clear
-permission error caught below, not a crash.
+Connections made before gmail.readonly or gmail.compose existed only
+granted whatever scopes came before them - calling either API with an
+old token fails with a clear permission error caught below, not a
+crash.
 """
 import os
 import base64
@@ -175,6 +184,45 @@ def _demo_emails(client):
             "modified_at": now - datetime.timedelta(days=4),
         },
     ]
+
+
+# ---------- Meeting minutes drafting ----------
+
+def create_meeting_draft(session, client, meeting):
+    """Creates a Gmail draft with this meeting's minutes, sitting in
+    the connected Google account's own Drafts folder - reviewing and
+    sending it happens in Gmail itself, not in this app, so there's no
+    separate approval UI to build here. Uses gmail.compose, the
+    narrowest scope that can create a draft (it cannot read or send
+    existing mail on its own - that's still gmail.readonly's job).
+    Raises on any failure (no connection, missing scope, Gmail API
+    error) - the caller turns that into a clean error response."""
+    from connectors import _drive_oauth_credentials
+    from email.mime.text import MIMEText
+
+    creds = _drive_oauth_credentials(session, client)
+    if not creds:
+        raise RuntimeError("Connect a Google account for this project first (Team & Keys)")
+
+    from googleapiclient.discovery import build
+    service = build("gmail", "v1", credentials=creds)
+
+    body_text = meeting.synthesized_summary or meeting.summary or "(no summary available yet)"
+    if meeting.source_url:
+        body_text += f"\n\nOriginal recording/notes: {meeting.source_url}"
+
+    mime_msg = MIMEText(body_text)
+    mime_msg["subject"] = f"Minutes of Meeting: {meeting.title or 'Untitled meeting'}"
+    if meeting.participants:
+        # Reconnecting after gmail.compose was added re-consents to
+        # this same scope, same as when gmail.readonly was added - an
+        # old token without it fails here with Gmail's own permission
+        # error, not a crash.
+        mime_msg["to"] = meeting.participants
+
+    raw = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode()
+    draft = service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
+    return draft.get("id")
 
 
 # ---------- Digest notification ----------
