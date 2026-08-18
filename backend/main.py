@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from database import init_db, SessionLocal
 from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
-from manifest import MODULES
+from manifest import MODULES, CONNECTOR_PRESETS
 from auth import oauth, is_email_allowed, is_admin_email
 from crypto import encrypt, decrypt
 import connectors
@@ -1523,6 +1523,11 @@ class OAuthProviderPayload(BaseModel):
     client_id: str
     client_secret: str
     scopes: str = ""
+
+
+@app.get("/api/connector-presets")
+def api_connector_presets(user: User = Depends(get_current_user)):
+    return CONNECTOR_PRESETS
 
 
 @app.get("/api/oauth-providers")

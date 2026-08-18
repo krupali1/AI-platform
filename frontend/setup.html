@@ -768,38 +768,11 @@ function toggleConnAuthFields() {
 // that mapping once for a well-known API; picking one fills in
 // everything below exactly like Test & detect fields would, without
 // needing a live credential to test against first.
-const CONNECTOR_PRESETS = {
-  calendar: {
-    name: 'Google Calendar',
-    description: 'Pulls calendar events matching the project name, via the connected Google account.',
-    content_type: 'document',
-    auth_style: 'google_oauth',
-    url: 'https://www.googleapis.com/calendar/v3/calendars/primary/events?q={query}',
-    results_path: 'items',
-    field_id: 'id',
-    field_title: 'summary',
-    field_content: 'description',
-    field_url: 'htmlLink',
-    field_date: 'start.dateTime',
-  },
-  fathom: {
-    name: 'Fathom',
-    description: "Pulls meeting recaps for anyone at the client's domain.",
-    content_type: 'meeting',
-    auth_style: 'header',
-    auth_header_name: 'X-Api-Key',
-    auth_value_prefix: '',
-    url: 'https://api.fathom.ai/external/v1/meetings?calendar_invitees_domains[]={domain}&include_summary=true&limit=10',
-    results_path: 'items',
-    field_id: 'recording_id',
-    field_title: 'meeting_title',
-    field_content: 'default_summary.markdown_formatted',
-    field_url: 'share_url',
-    field_date: 'recording_start_time',
-  },
-};
+let CONNECTOR_PRESETS = {};
 
-function populateConnPresetOptions() {
+async function populateConnPresetOptions() {
+  const res = await apiFetch('/api/connector-presets');
+  CONNECTOR_PRESETS = await res.json();
   const select = document.getElementById('connPreset');
   const custom = select.querySelector('option[value=""]');
   select.innerHTML = '';
@@ -827,6 +800,14 @@ function applyConnPreset() {
     document.getElementById('connValuePrefix').value = preset.auth_value_prefix || '';
   }
   toggleConnAuthFields();
+  if (preset.auth_style === 'oauth_provider') {
+    // Best-effort: if an admin already registered a provider named
+    // exactly like this preset (e.g. "GitHub"), pick it automatically -
+    // otherwise leave the dropdown for the user to pick themselves.
+    const provSelect = document.getElementById('connOauthProviderSelect');
+    const match = Array.from(provSelect.options).find(o => o.textContent === preset.name);
+    if (match) provSelect.value = match.value;
+  }
   document.getElementById('connUrl').value = preset.url;
   document.getElementById('connResultsPath').value = preset.results_path;
   document.getElementById('connFieldId').value = preset.field_id;
@@ -1031,7 +1012,7 @@ function showToast(status, text) {
   fetchModules();
   fetchEvents();
   setInterval(fetchEvents, 5000);
-  populateConnPresetOptions();
+  await populateConnPresetOptions();
 })();
 </script>
 </body>

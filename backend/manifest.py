@@ -76,3 +76,80 @@ MODULES = {
         "description": "Emails a digest of recent activity via Resend.",
     },
 }
+
+# Connector presets for the "+ New Connector" form. Each entry pre-fills a
+# known service's field mapping - a dotted path into that service's own
+# JSON response shape, worked out once here instead of by whoever's
+# creating the connector. Served to the frontend via GET
+# /api/connector-presets, so adding a new preset means adding an entry
+# here; nothing in the frontend needs to change.
+#
+# github and slack use auth_style "oauth_provider" rather than a pasted
+# API key - this only works once an admin has registered a matching OAuth
+# provider (Admin page -> "+ New OAuth provider") with a GitHub OAuth App
+# / Slack App's own client ID and secret, the same one-time setup Claude's
+# own GitHub connector relies on. Until that's done, these two presets
+# still fill in the connector's shape, but the provider dropdown they
+# point at will read "No providers registered yet".
+CONNECTOR_PRESETS = {
+    "calendar": {
+        "name": "Google Calendar",
+        "description": "Pulls calendar events matching the project name, via the connected Google account.",
+        "content_type": "document",
+        "auth_style": "google_oauth",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events?q={query}",
+        "results_path": "items",
+        "field_id": "id",
+        "field_title": "summary",
+        "field_content": "description",
+        "field_url": "htmlLink",
+        "field_date": "start.dateTime",
+    },
+    "fathom": {
+        "name": "Fathom",
+        "description": "Pulls meeting recaps for anyone at the client's domain.",
+        "content_type": "meeting",
+        "auth_style": "header",
+        "auth_header_name": "X-Api-Key",
+        "auth_value_prefix": "",
+        "url": "https://api.fathom.ai/external/v1/meetings?calendar_invitees_domains[]={domain}&include_summary=true&limit=10",
+        "results_path": "items",
+        "field_id": "recording_id",
+        "field_title": "meeting_title",
+        "field_content": "default_summary.markdown_formatted",
+        "field_url": "share_url",
+        "field_date": "recording_start_time",
+    },
+    "github": {
+        "name": "GitHub",
+        "description": "Pulls issues and pull requests matching the project name, via a connected GitHub account.",
+        "content_type": "document",
+        "auth_style": "oauth_provider",
+        "url": "https://api.github.com/search/issues?q={query}+in:title,body",
+        "results_path": "items",
+        "field_id": "id",
+        "field_title": "title",
+        "field_content": "body",
+        "field_url": "html_url",
+        "field_date": "updated_at",
+    },
+    "slack": {
+        "name": "Slack",
+        "description": "Pulls messages matching the project name, via a connected Slack workspace.",
+        "content_type": "document",
+        "auth_style": "oauth_provider",
+        "url": "https://slack.com/api/search.messages?query={query}",
+        # Slack's search API has no ISO date field - "ts" is a unix-epoch
+        # string, which rest_connector.py's _parse_dt can't parse, so
+        # synced messages land with no date. Left pointed at "ts" anyway,
+        # since it's the closest thing available and a failed parse just
+        # stores a null date rather than erroring - same as any other
+        # record whose date field comes back empty.
+        "results_path": "messages.matches",
+        "field_id": "ts",
+        "field_title": "text",
+        "field_content": "text",
+        "field_url": "permalink",
+        "field_date": "ts",
+    },
+}
