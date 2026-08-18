@@ -188,6 +188,53 @@ def _demo_emails(client):
 
 # ---------- Meeting minutes drafting ----------
 
+def _compile_meeting_minutes_html(session, client, meeting):
+    """Bold section headings, bulleted lists - same shape as
+    brief.py's project-level Brief (h3/ul/li, same as run_digest's own
+    HTML below), just scoped to one meeting instead of the whole
+    project. Reuses the decisions/action items/open questions already
+    extracted from this meeting (source_type == "Meeting", source_id
+    == meeting.id) rather than calling Claude again - same reasoning
+    as _compile_brief: the language understanding already happened
+    once, during extraction, this step is pure formatting."""
+    import html as html_lib
+    from brief import _fmt_date
+    from models import Decision, ActionItem, OpenQuestion
+
+    e = html_lib.escape
+    decisions = session.query(Decision).filter_by(client_id=client.id, source_type="Meeting", source_id=meeting.id).all()
+    action_items = session.query(ActionItem).filter_by(client_id=client.id, source_type="Meeting", source_id=meeting.id).all()
+    open_questions = session.query(OpenQuestion).filter_by(client_id=client.id, source_type="Meeting", source_id=meeting.id, status="open").all()
+
+    parts = [f"<h2>Minutes of Meeting: {e(meeting.title or 'Untitled meeting')}</h2>"]
+    parts.append(f"<p><b>Date:</b> {e(_fmt_date(meeting.occurred_at))}</p>")
+
+    if meeting.participants:
+        attendees = [p.strip() for p in meeting.participants.split(",") if p.strip()]
+        parts.append("<h3>Attendees</h3><ul>" + "".join(f"<li>{e(a)}</li>" for a in attendees) + "</ul>")
+
+    summary = meeting.synthesized_summary or meeting.summary or "(summary not yet generated)"
+    parts.append(f"<h3>Summary</h3><p>{e(summary)}</p>")
+
+    if decisions:
+        parts.append("<h3>Decisions</h3><ul>" + "".join(f"<li>{e(d.description)}</li>" for d in decisions) + "</ul>")
+
+    if action_items:
+        items = []
+        for a in action_items:
+            due = f", due {e(a.due_date)}" if a.due_date else ""
+            items.append(f"<li>{e(a.description)} (owner: {e(a.owner or 'unassigned')}{due}, status: {e(a.status)})</li>")
+        parts.append("<h3>Action Items</h3><ul>" + "".join(items) + "</ul>")
+
+    if open_questions:
+        parts.append("<h3>Open Questions</h3><ul>" + "".join(f"<li>{e(q.description)}</li>" for q in open_questions) + "</ul>")
+
+    if meeting.source_url:
+        parts.append(f'<p><a href="{e(meeting.source_url)}">Original recording/notes</a></p>')
+
+    return "".join(parts)
+
+
 def create_meeting_draft(session, client, meeting):
     """Creates a Gmail draft with this meeting's minutes, sitting in
     the connected Google account's own Drafts folder - reviewing and
@@ -207,11 +254,12 @@ def create_meeting_draft(session, client, meeting):
     from googleapiclient.discovery import build
     service = build("gmail", "v1", credentials=creds)
 
-    body_text = meeting.synthesized_summary or meeting.summary or "(no summary available yet)"
-    if meeting.source_url:
-        body_text += f"\n\nOriginal recording/notes: {meeting.source_url}"
+    html_body = _compile_meeting_minutes_html(session, client, meeting)
 
-    mime_msg = MIMEText(body_text)
+    # HTML, not plain text - bold headings and bullet points only
+    # render as such in Gmail with a real <b>/<ul> markup, not literal
+    # ** or - characters.
+    mime_msg = MIMEText(html_body, "html")
     mime_msg["subject"] = f"Minutes of Meeting: {meeting.title or 'Untitled meeting'}"
     if meeting.participants:
         # Reconnecting after gmail.compose was added re-consents to
