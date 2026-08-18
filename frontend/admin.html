@@ -344,16 +344,19 @@
     </thead>
     <tbody id="providerRows"></tbody>
   </table>
-  <button class="project-new-btn" onclick="toggleNewProvider()">+ New OAuth provider</button>
+  <button class="project-new-btn" id="newProviderBtn" onclick="toggleNewProvider()">+ New OAuth provider</button>
   <div class="provider-form" id="newProviderForm">
+    <h4 id="providerFormTitle" style="margin:0 0 4px; font-family:var(--mono); font-size:12px;">New OAuth provider</h4>
     <input id="provName" type="text" placeholder="Name (e.g. Slack)" />
     <input id="provAuthUrl" type="text" placeholder="Authorize URL (e.g. https://slack.com/oauth/v2/authorize)" />
     <input id="provTokenUrl" type="text" placeholder="Token URL (e.g. https://slack.com/api/oauth.v2.access)" />
     <input id="provClientId" type="text" placeholder="Client ID" />
     <input id="provClientSecret" type="password" placeholder="Client secret" />
-    <input id="provScopes" type="text" placeholder="Scopes, in whatever format this provider expects" />
+    <input id="provScopes" type="text" placeholder="Bot scopes, if this provider has any (most SaaS apps)" />
+    <input id="provUserScopes" type="text" placeholder="User scopes, if this provider needs any (e.g. Slack search: search:read)" />
+    <p class="oauth-hint">Most providers only need "Bot scopes". "User scopes" is for permissions granted to whoever signs in, not the app itself - Slack's own search API only works with a user scope, never a bot one.</p>
     <p class="oauth-hint">Redirect URI to register with the provider: <code id="redirectUriHint"></code></p>
-    <button class="primary" onclick="createProvider()">Create provider</button>
+    <button class="primary" id="providerFormSubmitBtn" onclick="submitProvider()">Create provider</button>
   </div>
 </main>
   </div>
@@ -450,48 +453,90 @@ async function setRole(userId) {
   }
 }
 
+let allProviders = [];
+let editingProviderId = null;
+
 async function loadProviders() {
   const res = await apiFetch('/api/oauth-providers');
-  const providers = await res.json();
-  document.getElementById('providerRows').innerHTML = providers.map(p => `
+  allProviders = await res.json();
+  document.getElementById('providerRows').innerHTML = allProviders.map(p => `
     <tr>
       <td>${p.name}</td>
       <td class="joined">${p.slug}</td>
-      <td class="joined">${p.scopes || '—'}</td>
-      <td><button class="provider-delete-btn" onclick="deleteProvider(${p.id})">Delete</button></td>
+      <td class="joined">${p.scopes || '—'}${p.user_scopes ? ` <span title="User scopes">(user: ${p.user_scopes})</span>` : ''}</td>
+      <td>
+        <button class="provider-delete-btn" onclick="openEditProvider(${p.id})">Edit</button>
+        <button class="provider-delete-btn" onclick="deleteProvider(${p.id})">Delete</button>
+      </td>
     </tr>
   `).join('') || '<tr><td colspan="4" class="joined">None yet</td></tr>';
 }
 
+function resetProviderForm() {
+  ['provName', 'provAuthUrl', 'provTokenUrl', 'provClientId', 'provClientSecret', 'provScopes', 'provUserScopes']
+    .forEach(id => { document.getElementById(id).value = ''; });
+}
+
 function toggleNewProvider() {
   const form = document.getElementById('newProviderForm');
-  form.classList.toggle('open');
+  const opening = !form.classList.contains('open');
+  if (opening) {
+    // Reached via the "+ New OAuth provider" button, not a row's Edit
+    // button - always a fresh create, even if the form was left
+    // mid-edit last time it closed.
+    editingProviderId = null;
+    resetProviderForm();
+    document.getElementById('providerFormTitle').textContent = 'New OAuth provider';
+    document.getElementById('providerFormSubmitBtn').textContent = 'Create provider';
+    document.getElementById('provClientSecret').placeholder = 'Client secret';
+  }
+  form.classList.toggle('open', opening);
   document.getElementById('redirectUriHint').textContent = `${window.location.origin}/oauth/callback`;
 }
 
-async function createProvider() {
+function openEditProvider(id) {
+  const provider = allProviders.find(p => p.id === id);
+  if (!provider) return;
+  editingProviderId = id;
+  document.getElementById('providerFormTitle').textContent = `Edit provider: ${provider.name}`;
+  document.getElementById('providerFormSubmitBtn').textContent = 'Save changes';
+  document.getElementById('provName').value = provider.name;
+  document.getElementById('provAuthUrl').value = provider.authorize_url || '';
+  document.getElementById('provTokenUrl').value = provider.token_url || '';
+  document.getElementById('provClientId').value = provider.client_id || '';
+  document.getElementById('provClientSecret').value = '';
+  document.getElementById('provClientSecret').placeholder = 'Leave blank to keep the current secret';
+  document.getElementById('provScopes').value = provider.scopes || '';
+  document.getElementById('provUserScopes').value = provider.user_scopes || '';
+  document.getElementById('newProviderForm').classList.add('open');
+  document.getElementById('redirectUriHint').textContent = `${window.location.origin}/oauth/callback`;
+}
+
+async function submitProvider() {
   const name = document.getElementById('provName').value.trim();
   const authorize_url = document.getElementById('provAuthUrl').value.trim();
   const token_url = document.getElementById('provTokenUrl').value.trim();
   const client_id = document.getElementById('provClientId').value.trim();
   const client_secret = document.getElementById('provClientSecret').value.trim();
   const scopes = document.getElementById('provScopes').value.trim();
-  if (!name || !authorize_url || !token_url || !client_id || !client_secret) {
-    alert('Name, both URLs, client ID, and client secret are all required.');
+  const user_scopes = document.getElementById('provUserScopes').value.trim();
+  const isEdit = editingProviderId !== null;
+  if (!name || !authorize_url || !token_url || !client_id || (!isEdit && !client_secret)) {
+    alert(`Name, both URLs, client ID, and client secret are all required${isEdit ? ' (secret only if you\'re changing it)' : ''}.`);
     return;
   }
-  const res = await apiFetch('/api/oauth-providers', {
-    method: 'POST',
+  const res = await apiFetch(isEdit ? `/api/oauth-providers/${editingProviderId}` : '/api/oauth-providers', {
+    method: isEdit ? 'PATCH' : 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, authorize_url, token_url, client_id, client_secret, scopes }),
+    body: JSON.stringify({ name, authorize_url, token_url, client_id, client_secret, scopes, user_scopes }),
   });
   if (!res.ok) {
     const body = await res.json();
-    alert(formatApiError(body, 'Could not create provider'));
+    alert(formatApiError(body, isEdit ? 'Could not save changes' : 'Could not create provider'));
     return;
   }
-  ['provName', 'provAuthUrl', 'provTokenUrl', 'provClientId', 'provClientSecret', 'provScopes']
-    .forEach(id => { document.getElementById(id).value = ''; });
+  editingProviderId = null;
+  resetProviderForm();
   document.getElementById('newProviderForm').classList.remove('open');
   await loadProviders();
 }

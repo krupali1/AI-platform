@@ -294,7 +294,13 @@ class OAuthProvider(Base):
     token_url = Column(String)
     client_id = Column(String)
     encrypted_client_secret = Column(Text)
-    scopes = Column(String)                      # provider's own format - space or comma separated
+    scopes = Column(String)                      # bot-token scopes, sent as the "scope" param - provider's own format
+    user_scopes = Column(String)                 # user-token scopes, sent as the separate "user_scope" param Slack (and
+                                                  # some other providers) require for anything done on behalf of the
+                                                  # signed-in user rather than the app/bot itself - e.g. Slack's
+                                                  # search.messages API only works with a user scope (search:read),
+                                                  # never a bot one. Requesting it via "scope" instead gets rejected
+                                                  # by Slack's own authorize page as an invalid permission.
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 

@@ -1598,6 +1598,17 @@ class OAuthProviderPayload(BaseModel):
     client_id: str
     client_secret: str
     scopes: str = ""
+    user_scopes: str = ""
+
+
+class OAuthProviderUpdatePayload(BaseModel):
+    name: str
+    authorize_url: str
+    token_url: str
+    client_id: str
+    client_secret: str = ""   # blank means "keep the existing secret" - editing shouldn't force re-entering it
+    scopes: str = ""
+    user_scopes: str = ""
 
 
 @app.get("/api/connector-presets")
@@ -1609,7 +1620,14 @@ def api_connector_presets(user: User = Depends(get_current_user)):
 def list_oauth_providers(user: User = Depends(get_current_user)):
     session = SessionLocal()
     rows = session.query(OAuthProvider).order_by(OAuthProvider.name).all()
-    out = [{"id": p.id, "name": p.name, "slug": p.slug, "scopes": p.scopes} for p in rows]
+    # client_id/authorize_url/token_url are all non-secret (only
+    # encrypted_client_secret is withheld) - included so the edit form
+    # can prefill from this same list without a second round-trip.
+    out = [{
+        "id": p.id, "name": p.name, "slug": p.slug,
+        "authorize_url": p.authorize_url, "token_url": p.token_url, "client_id": p.client_id,
+        "scopes": p.scopes, "user_scopes": p.user_scopes,
+    } for p in rows]
     session.close()
     return out
 
@@ -1637,6 +1655,7 @@ def create_oauth_provider(payload: OAuthProviderPayload, user: User = Depends(re
         client_id=payload.client_id.strip(),
         encrypted_client_secret=encrypt(payload.client_secret.strip()),
         scopes=payload.scopes.strip(),
+        user_scopes=payload.user_scopes.strip(),
         created_by_id=user.id,
     )
     session.add(provider)
@@ -1645,6 +1664,33 @@ def create_oauth_provider(payload: OAuthProviderPayload, user: User = Depends(re
     out = {"id": provider.id, "slug": provider.slug}
     session.close()
     return out
+
+
+@app.patch("/api/oauth-providers/{provider_id}")
+def update_oauth_provider(provider_id: int, payload: OAuthProviderUpdatePayload, user: User = Depends(require_role("admin"))):
+    """Edits a provider in place - the connect URL and any RestConnector
+    rows already pointing at it (by id, not slug) keep working, unlike
+    delete-and-recreate which would orphan those references and force
+    rebuilding every connector that used it."""
+    name = payload.name.strip()
+    if not name or not payload.authorize_url.strip() or not payload.token_url.strip() or not payload.client_id.strip():
+        raise HTTPException(400, "name, both URLs, and client ID are all required")
+    session = SessionLocal()
+    provider = session.query(OAuthProvider).filter_by(id=provider_id).first()
+    if not provider:
+        session.close()
+        raise HTTPException(404, "provider not found")
+    provider.name = name
+    provider.authorize_url = payload.authorize_url.strip()
+    provider.token_url = payload.token_url.strip()
+    provider.client_id = payload.client_id.strip()
+    if payload.client_secret.strip():
+        provider.encrypted_client_secret = encrypt(payload.client_secret.strip())
+    provider.scopes = payload.scopes.strip()
+    provider.user_scopes = payload.user_scopes.strip()
+    session.commit()
+    session.close()
+    return {"ok": True}
 
 
 @app.delete("/api/oauth-providers/{provider_id}")

@@ -32,6 +32,12 @@ def build_authorize_url(provider, redirect_uri, state):
         "response_type": "code",
         "state": state,
     }
+    # Sent as a separate "user_scope" param, not folded into "scope" -
+    # Slack (and some other providers) reject a user-only scope like
+    # search:read if it's requested via "scope", since that param is
+    # validated against the app's registered BOT scopes specifically.
+    if provider.user_scopes:
+        params["user_scope"] = provider.user_scopes
     return f"{provider.authorize_url}?{urllib.parse.urlencode(params)}"
 
 
