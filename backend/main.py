@@ -12,7 +12,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from database import init_db, SessionLocal
-from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
+from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, RestConnectorResource, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
 from manifest import MODULES, CONNECTOR_PRESETS
 from auth import oauth, is_email_allowed, is_admin_email
 from crypto import encrypt, decrypt
@@ -1127,6 +1127,7 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             )
         needs_credential = False
         oauth_provider_slug, oauth_provider_name = None, None
+        supports_resource_picker = False
         if rc.auth_style == "header" and project:
             has_cred = session.query(RestConnectorCredential).filter_by(connector_id=rc.id, client_id=project.id).first()
             needs_credential = not has_cred
@@ -1134,6 +1135,11 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             provider = session.query(OAuthProvider).filter_by(id=rc.oauth_provider_id).first()
             oauth_provider_slug = provider.slug if provider else None
             oauth_provider_name = provider.name if provider else None
+            # Only GitHub's API has a "list resources" implementation
+            # (rest_connector.list_provider_resources) right now - see
+            # its docstring for why this checks authorize_url rather
+            # than the admin-editable name.
+            supports_resource_picker = bool(provider and "github.com" in (provider.authorize_url or ""))
             has_conn = session.query(OAuthConnection).filter_by(provider_id=rc.oauth_provider_id, client_id=project.id).first()
             needs_credential = not has_conn
         out.append({
@@ -1143,8 +1149,10 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             "reads": [],
             "writes": ["Meeting" if rc.content_type == "meeting" else "Document"],
             "description": rc.description or "",
+            "oauth_provider_id": rc.oauth_provider_id if rc.auth_style == "oauth_provider" else None,
             "oauth_provider_slug": oauth_provider_slug,
             "oauth_provider_name": oauth_provider_name,
+            "supports_resource_picker": supports_resource_picker,
             "custom": True,
             "connector_id": rc.id,
             "auth_style": rc.auth_style,
@@ -1509,6 +1517,73 @@ def clear_rest_connector_credential(connector_id: int, request: Request, user: U
         raise HTTPException(400, "No project selected")
     require_project_admin(user, project.id, session)
     session.query(RestConnectorCredential).filter_by(connector_id=connector_id, client_id=project.id).delete()
+    session.commit()
+    session.close()
+    return {"ok": True}
+
+
+class ResourceSelectionPayload(BaseModel):
+    resources: List[dict] = []   # [{"id": "owner/repo", "label": "owner/repo"}, ...]
+
+
+@app.get("/api/rest-connectors/{connector_id}/resources")
+def list_rest_connector_resources(connector_id: int, request: Request, user: User = Depends(require_role("admin", "member"))):
+    """Live-lists what the connected account can see (currently:
+    GitHub repos) for the resource picker in Team & Keys, alongside
+    whichever of those are already selected for the current project."""
+    session = SessionLocal()
+    project = get_current_project(request, session)
+    if not project:
+        session.close()
+        raise HTTPException(400, "No project selected")
+    require_project_admin(user, project.id, session)
+    connector = session.query(RestConnector).filter_by(id=connector_id).first()
+    if not connector:
+        session.close()
+        raise HTTPException(404, "Connector not found")
+    try:
+        available = rest_connector.list_provider_resources(session, project, connector)
+    except ValueError as e:
+        session.close()
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        session.close()
+        raise HTTPException(502, f"Could not list resources: {e}")
+    selected = [
+        r.resource_id for r in
+        session.query(RestConnectorResource).filter_by(connector_id=connector_id, client_id=project.id).all()
+    ]
+    session.close()
+    return {"available": available, "selected": selected}
+
+
+@app.post("/api/rest-connectors/{connector_id}/resources")
+def set_rest_connector_resources(connector_id: int, payload: ResourceSelectionPayload, request: Request, user: User = Depends(require_role("admin", "member"))):
+    """Replaces the full selection for this (connector, project) pair -
+    an empty list clears it back to "unrestricted", same as never
+    having picked anything."""
+    session = SessionLocal()
+    project = get_current_project(request, session)
+    if not project:
+        session.close()
+        raise HTTPException(400, "No project selected")
+    require_project_admin(user, project.id, session)
+    connector = session.query(RestConnector).filter_by(id=connector_id).first()
+    if not connector:
+        session.close()
+        raise HTTPException(404, "Connector not found")
+    if connector.auth_style != "oauth_provider":
+        session.close()
+        raise HTTPException(400, "Resource selection only applies to OAuth-connected connectors")
+    session.query(RestConnectorResource).filter_by(connector_id=connector_id, client_id=project.id).delete()
+    for r in payload.resources:
+        resource_id = (r.get("id") or "").strip()
+        if not resource_id:
+            continue
+        session.add(RestConnectorResource(
+            connector_id=connector_id, client_id=project.id,
+            resource_id=resource_id, resource_label=(r.get("label") or resource_id),
+        ))
     session.commit()
     session.close()
     return {"ok": True}

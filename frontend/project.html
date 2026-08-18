@@ -170,6 +170,9 @@
     display: none; position: fixed; inset: 0; background: rgba(28,27,25,0.4);
     z-index: 50; align-items: flex-start; justify-content: center; padding: 70px 20px; overflow-y: auto;
   }
+  /* Opened from inside the Team & Keys modal - needs to stack above it,
+     not just above the page, since both share the base z-index. */
+  #resourcePickerOverlay { z-index: 60; }
   .modal-overlay.open { display: flex; }
   .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
   .modal-header h4 { margin: 0; font-family: var(--mono); font-size: 13px; letter-spacing: 0.05em; }
@@ -394,6 +397,18 @@
     <span class="agent-reads-label">Applies to:</span>
     <div id="connProjectChecklist" class="project-checklist"></div>
     <button class="primary" id="newConnectorSubmitBtn" onclick="saveConnector()">Create connector</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="resourcePickerOverlay" onclick="if(event.target===this) closeResourcePicker()">
+  <div class="project-new-form agent-form" id="resourcePickerForm" style="max-width:420px;">
+    <div class="modal-header">
+      <h4>Choose repositories</h4>
+      <button class="modal-close" onclick="closeResourcePicker()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;">Only issues and pull requests in the repos checked here will sync - leave none checked to search everything the connected account can see.</p>
+    <div id="resourcePickerList" class="project-checklist" style="max-height:280px;"></div>
+    <button class="primary" onclick="saveResourceSelection()">Save selection</button>
   </div>
 </div>
 
@@ -1079,7 +1094,10 @@ async function renderConnectorKeys() {
           <div class="tp-connector-label">${m.display_name}</div>
           <div class="tp-status ${connection ? 'set' : 'unset'}">${connection ? `Connected${connection.connected_label ? ' as ' + connection.connected_label : ''}` : 'Not connected'}</div>
           ${connection
-            ? `<button class="danger" onclick="disconnectConnectorOauth(${connection.id})">Disconnect</button>`
+            ? `<div class="btn-row">
+                 ${m.supports_resource_picker ? `<button onclick="openResourcePicker(${m.connector_id})">Choose repositories</button>` : ''}
+                 <button class="danger" onclick="disconnectConnectorOauth(${connection.id})">Disconnect</button>
+               </div>`
             : `<a class="drive-connect-btn" href="/oauth/${m.oauth_provider_slug}/connect/${currentProjectId}">Connect ${m.oauth_provider_name || ''}</a>`}
         </div>`;
     }
@@ -1116,6 +1134,50 @@ async function saveConnectorCredential(connectorId) {
 async function disconnectConnectorOauth(connectionId) {
   await apiFetch(`/api/oauth-connections/${connectionId}`, { method: 'DELETE' });
   await renderConnectorKeys();
+}
+
+let resourcePickerConnectorId = null;
+
+async function openResourcePicker(connectorId) {
+  resourcePickerConnectorId = connectorId;
+  const list = document.getElementById('resourcePickerList');
+  list.innerHTML = '<p class="empty-note">Loading…</p>';
+  document.getElementById('resourcePickerOverlay').classList.add('open');
+  const res = await apiFetch(`/api/rest-connectors/${connectorId}/resources`);
+  const body = await res.json();
+  if (!res.ok) {
+    list.innerHTML = `<p class="empty-note">${formatApiError(body, 'Could not load repositories')}</p>`;
+    return;
+  }
+  if (!body.available.length) {
+    list.innerHTML = '<p class="empty-note">No repositories found for the connected account.</p>';
+    return;
+  }
+  list.innerHTML = body.available.map(r => `
+    <label><input type="checkbox" class="resource-check" value="${r.id}" data-label="${r.label}" ${body.selected.includes(r.id) ? 'checked' : ''} /> ${r.label}</label>
+  `).join('');
+}
+
+function closeResourcePicker() {
+  document.getElementById('resourcePickerOverlay').classList.remove('open');
+  resourcePickerConnectorId = null;
+}
+
+async function saveResourceSelection() {
+  if (!resourcePickerConnectorId) return;
+  const resources = Array.from(document.querySelectorAll('#resourcePickerList .resource-check:checked'))
+    .map(i => ({ id: i.value, label: i.dataset.label }));
+  const res = await apiFetch(`/api/rest-connectors/${resourcePickerConnectorId}/resources`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resources }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(formatApiError(body, 'Could not save selection'));
+    return;
+  }
+  closeResourcePicker();
 }
 
 async function clearConnectorCredential(connectorId) {

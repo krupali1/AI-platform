@@ -261,6 +261,24 @@ class RestConnectorCredential(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class RestConnectorResource(Base):
+    """Which specific upstream resources (currently: GitHub repos) an
+    oauth_provider connector should scope its search to, for a given
+    project - a real per-(connector, project) table rather than a
+    serialized list, same reasoning as RestConnectorProject. No rows
+    for a given (connector_id, client_id) means "no restriction" -
+    search everything the connected account can see, which is the
+    behavior every connector had before this table existed, so it
+    stays the default rather than something that has to be opted out
+    of."""
+    __tablename__ = "rest_connector_resources"
+    id = Column(Integer, primary_key=True)
+    connector_id = Column(Integer, ForeignKey("rest_connectors.id"))
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    resource_id = Column(String)      # e.g. a GitHub repo's "owner/name" full_name
+    resource_label = Column(String)   # display label - same as resource_id for GitHub
+
+
 class OAuthProvider(Base):
     """Tier B: a generic OAuth2 provider definition - Slack, or any
     other OAuth2 SaaS, registered as configuration rather than a new

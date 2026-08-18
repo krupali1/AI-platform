@@ -197,6 +197,65 @@ def detect_fields(session, client, auth_style, auth_header_name, auth_value_pref
     return {"results_path": results_path, "sample_item": sample, "suggested_fields": suggest_field_mapping(sample)}
 
 
+def _resolve_oauth_token(session, client, connector):
+    """Shared by list_provider_resources and run_rest_connector's
+    oauth_provider branch - raises ValueError (not connected yet,
+    caller decides how to surface that) rather than returning None,
+    since both callers need to distinguish "not connected" from a
+    real fetch failure."""
+    from models import OAuthProvider, OAuthConnection
+    import oauth_generic
+    provider = session.query(OAuthProvider).filter_by(id=connector.oauth_provider_id).first()
+    connection = session.query(OAuthConnection).filter_by(
+        provider_id=connector.oauth_provider_id, client_id=client.id
+    ).first() if provider else None
+    if not provider or not connection:
+        raise ValueError(f"Connect {provider.name if provider else 'this provider'} for this project first (Team & Keys)")
+    token = oauth_generic.get_valid_access_token(session, connection, provider)
+    return provider, token
+
+
+def list_provider_resources(session, client, connector):
+    """Lists the resources (currently: GitHub repos) the connected
+    account can see, for the resource-picker in Team & Keys. Only
+    GitHub is implemented - matched by the provider's authorize_url
+    domain rather than its (admin-editable, free-text) name, since
+    that's the one field that reliably identifies which API is
+    actually behind a given OAuthProvider row. Capped at 100 repos.
+    Any other oauth_provider raises ValueError, which the caller
+    turns into a 400 - there's nothing to list, and no way to know
+    that API's resource shape without more provider-specific code."""
+    provider, token = _resolve_oauth_token(session, client, connector)
+    if "github.com" not in (provider.authorize_url or ""):
+        raise ValueError(f"Resource selection isn't available for {provider.name} yet")
+
+    resp = requests.get(
+        "https://api.github.com/user/repos",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        params={"per_page": 100, "sort": "updated", "affiliation": "owner,collaborator,organization_member"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    repos = resp.json()
+    return [
+        {"id": r["full_name"], "label": r["full_name"] + (" (private)" if r.get("private") else "")}
+        for r in repos
+    ]
+
+
+def _scope_query_to_resource(url, resource_id):
+    """GitHub's search API takes a repo: qualifier embedded in the q=
+    parameter itself, not a separate query param - reparses the URL to
+    append it there rather than assuming a fixed template shape, since
+    the template's own {query}/{domain} placeholders may already be
+    part of that same q= value."""
+    parsed = urllib.parse.urlparse(url)
+    params = dict(urllib.parse.parse_qsl(parsed.query))
+    if "q" in params:
+        params["q"] = f"{params['q']} repo:{resource_id}"
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(params)))
+
+
 def run_rest_connector(session, client, connector):
     if connector.auth_style == "google_oauth":
         from connectors import _drive_oauth_credentials
@@ -233,24 +292,40 @@ def run_rest_connector(session, client, connector):
         auth_header = {connector.auth_header_name: f"{connector.auth_value_prefix}{value}"}
 
     try:
-        url = _build_url(connector.search_url_template, client.name, client.domain)
-        resp = requests.get(url, headers=auth_header, timeout=20)
-        try:
-            resp.raise_for_status()
-        except requests.exceptions.HTTPError:
-            # The default HTTPError message is just the status line
-            # ("400 Client Error: Bad Request for url: ...") - it drops
-            # whatever explanation the API actually put in the response
-            # body, which is almost always the one piece of information
-            # that says why a request was rejected. Re-raised with that
-            # body (truncated) instead, so the Event log shows the real
-            # reason instead of a generic status line with no detail.
-            detail = (resp.text or "")[:300]
-            raise RuntimeError(f"{resp.status_code} error from {connector.display_name}: {detail}") from None
-        body = resp.json()
-        results = _get_path(body, connector.results_path)
-        if not isinstance(results, list):
-            raise RuntimeError(f"results_path '{connector.results_path}' did not point at a list in the response")
+        base_url = _build_url(connector.search_url_template, client.name, client.domain)
+        # Resource selections (currently: GitHub repos, picked in Team &
+        # Keys) scope the search to just those - one request per
+        # selected resource rather than trying to OR them into a
+        # single query, since GitHub's repo: qualifier has its own
+        # undocumented limits on how many can be combined. No
+        # selection for this (connector, project) means unrestricted,
+        # same as before this table existed.
+        from models import RestConnectorResource
+        resources = session.query(RestConnectorResource).filter_by(
+            connector_id=connector.id, client_id=client.id
+        ).all()
+        urls = [_scope_query_to_resource(base_url, r.resource_id) for r in resources] if resources else [base_url]
+
+        results = []
+        for url in urls:
+            resp = requests.get(url, headers=auth_header, timeout=20)
+            try:
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError:
+                # The default HTTPError message is just the status line
+                # ("400 Client Error: Bad Request for url: ...") - it drops
+                # whatever explanation the API actually put in the response
+                # body, which is almost always the one piece of information
+                # that says why a request was rejected. Re-raised with that
+                # body (truncated) instead, so the Event log shows the real
+                # reason instead of a generic status line with no detail.
+                detail = (resp.text or "")[:300]
+                raise RuntimeError(f"{resp.status_code} error from {connector.display_name}: {detail}") from None
+            body = resp.json()
+            page_results = _get_path(body, connector.results_path)
+            if not isinstance(page_results, list):
+                raise RuntimeError(f"results_path '{connector.results_path}' did not point at a list in the response")
+            results.extend(page_results)
 
         # "meeting" content_type routes into the Meeting table (shows up
         # under Repository's Meetings tab, reads via transcript-or-summary
