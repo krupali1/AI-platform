@@ -7,6 +7,7 @@ function registered in main.py's RUNNERS dict; nothing else in the
 platform needs to change - the dashboard's Step 2 renders whatever's
 in this dict automatically.
 """
+import os
 
 MODULES = {
     "fireflies-connector": {
@@ -76,6 +77,23 @@ MODULES = {
         "description": "Emails a digest of recent activity via Resend.",
     },
 }
+
+# Which built-in modules above this deployment is allowed to run - only
+# meaningful once there's more than one deployment of this codebase (see
+# DEPLOY.md's "Deploying a second, isolated client"), so a client who
+# hasn't signed off on, say, Gmail access can have that module absent
+# entirely rather than just hidden. Custom PromptEngine agents and
+# RestConnectors are untouched - they're already scoped per-project via
+# their own *Project join tables, this only gates the shared registry
+# above. Empty means "no restriction", same "blank allows everything"
+# convention as ALLOWED_EMAIL_DOMAIN in auth.py - existing single-client
+# deployments that never set this see no change in behavior.
+ENABLED_MODULES = {m.strip() for m in os.getenv("ENABLED_MODULES", "").split(",") if m.strip()}
+
+
+def is_module_enabled(module_id: str) -> bool:
+    return not ENABLED_MODULES or module_id in ENABLED_MODULES
+
 
 # Connector presets for the "+ New Connector" form. Each entry pre-fills a
 # known service's field mapping - a dotted path into that service's own

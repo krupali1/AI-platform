@@ -52,7 +52,7 @@
 </head>
 <body>
   <div class="card">
-    <div class="eyebrow">SBAMI · Client Memory Console</div>
+    <div class="eyebrow"><span id="brandName">Client Memory Console</span></div>
     <h1>Sign in to continue</h1>
     <p class="sub">Your account keeps its own Anthropic API key, kept encrypted and private to you.</p>
     <a class="google-btn" href="/auth/google/login">
@@ -69,6 +69,24 @@
       el.style.display = 'block';
       el.textContent = 'That Google account isn\'t on the approved list for this console.';
     }
+
+    // No session yet on this page, so this can't reuse apiFetch (which
+    // redirects to /login on 401 - the exact page already showing).
+    // Any failure is swallowed - branding is cosmetic.
+    async function applyBranding() {
+      try {
+        const res = await fetch('/api/branding');
+        if (!res.ok) return;
+        const b = await res.json();
+        document.documentElement.style.setProperty('--accent', b.accent_color);
+        const nameEl = document.getElementById('brandName');
+        if (nameEl) nameEl.textContent = b.name;
+        if (b.name) document.title = document.title.replace('Client Memory Console', b.name);
+      } catch (e) {
+        // swallowed - see the comment above this function
+      }
+    }
+    applyBranding();
   </script>
 </body>
 </html>

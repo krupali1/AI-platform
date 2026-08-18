@@ -114,3 +114,24 @@ git push
 ```
 
 Render rebuilds and redeploys automatically on push to `main`. Since the database is Postgres now, not the local SQLite file, a redeploy doesn't wipe any data - meetings, documents, decisions, and every user's role and encrypted key all persist across deploys.
+
+## Deploying a second, isolated client
+
+Once there's an actual second client to onboard, each one gets its own fully separate Render service and Postgres database - not a new row in the existing one. Nothing in the app code changes for this; it's all repeating steps 1-3 above against a fresh set of resources, plus the env vars below.
+
+1. Fork or branch the repo (or push the same `main` to a second GitHub repo) and tag the commit you're deploying, e.g. `git tag client-acme-2026-08-18 && git push --tags` - see "Tracking releases across deployments" below for why.
+2. Repeat step 2 (Create the Postgres database) and step 3 (Create the web service) for this client, using a name that identifies them (e.g. `acme-platform-db`, `acme-platform`) rather than reusing `sbami-platform-*`.
+3. Add three more environment variables on top of the table in step 3:
+
+   | Key | Value |
+   |---|---|
+   | `BRAND_NAME` | this client's name, e.g. `Acme Client Memory Console` |
+   | `BRAND_ACCENT_COLOR` | a hex color, e.g. `#2a6f4f` |
+   | `ENABLED_MODULES` | comma-separated built-in module IDs this client is allowed to run, or leave blank for all of them |
+
+   `BRAND_NAME`/`BRAND_ACCENT_COLOR` are picked up by every page's header and browser tab automatically (`GET /api/branding`) - no rebuild needed, just an env var change and a redeploy. `ENABLED_MODULES` restricts which of the four built-in connectors/notifier show up under Step 2 and can be RUN.
+4. Repeat step 4 (Google OAuth callback URLs) and step 5 (Test it) for this client's own Render URL.
+
+### Tracking releases across deployments
+
+With more than one client deployment on the same codebase, `git tag` is the cheap way to know what's actually running where - tag before each deploy rather than relying on commit messages or memory. Pushing a platform update to multiple clients is then just: merge to `main`, push to each client's remote/branch, let Render's auto-deploy pick it up, tag each one once it's live. No tooling to build for this - it's a discipline, not a feature.

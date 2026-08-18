@@ -210,7 +210,7 @@
 <body>
 
 <header>
-  <div class="title">SBAMI <span style="color:var(--text-muted)">·</span> <strong>ADMIN</strong></div>
+  <div class="title"><span id="brandName">CLIENT MEMORY CONSOLE</span> <span style="color:var(--text-muted)">·</span> <strong>ADMIN</strong></div>
   <div class="header-right-actions">
     <div class="header-create-row">
       <button class="header-new-btn" id="newProjectBtn" onclick="toggleNewProject()">+ New Project</button>
@@ -368,6 +368,23 @@ async function apiFetch(url, opts) {
   if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthenticated'); }
   if (res.status === 403) { window.location.href = '/'; throw new Error('forbidden'); }
   return res;
+}
+
+// Plain fetch, not apiFetch - this endpoint is public and a redirect
+// on 401/403 would be wrong here regardless. Any failure is swallowed
+// - branding is cosmetic, never lets a network hiccup break the page.
+async function applyBranding() {
+  try {
+    const res = await fetch('/api/branding');
+    if (!res.ok) return;
+    const b = await res.json();
+    document.documentElement.style.setProperty('--accent', b.accent_color);
+    const nameEl = document.getElementById('brandName');
+    if (nameEl) nameEl.textContent = b.name.toUpperCase();
+    if (b.name) document.title = document.title.replace('Client Memory Console', b.name);
+  } catch (e) {
+    // swallowed - see the comment above this function
+  }
 }
 
 // FastAPI/Pydantic validation errors (422) send `detail` as a list of
@@ -852,6 +869,7 @@ loadUsers();
 loadProviders();
 loadCurrentProject();
 populateConnPresetOptions();
+applyBranding();
 </script>
 </body>
 </html>

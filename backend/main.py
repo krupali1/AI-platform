@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from database import init_db, SessionLocal
 from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, RestConnectorResource, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
-from manifest import MODULES, CONNECTOR_PRESETS
+from manifest import MODULES, CONNECTOR_PRESETS, is_module_enabled
 from auth import oauth, is_email_allowed, is_admin_email
 from crypto import encrypt, decrypt
 import connectors
@@ -271,6 +271,17 @@ def login_page(request: Request):
     if request.session.get("user_id"):
         return RedirectResponse(url="/")
     return FileResponse("../frontend/login.html")
+
+
+@app.get("/api/branding")
+def api_branding():
+    # No auth dependency, deliberately - login.html has no session yet
+    # and still needs this to show the right name before anyone signs
+    # in. Nothing sensitive here, just a display name and a hex color.
+    return {
+        "name": os.getenv("BRAND_NAME", "Client Memory Console"),
+        "accent_color": os.getenv("BRAND_ACCENT_COLOR", "#b5651d"),
+    }
 
 
 @app.get("/auth/google/login")
@@ -1056,6 +1067,8 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
     project = get_current_project(request, session)
     out = []
     for module_id, spec in MODULES.items():
+        if not is_module_enabled(module_id):
+            continue
         last_event = None
         if project:
             last_event = (
@@ -1922,6 +1935,10 @@ def api_run(module_id: str, request: Request, user: User = Depends(require_role(
     if not client:
         session.close()
         return JSONResponse({"error": "No project selected - create or select one first"}, status_code=400)
+
+    if module_id in RUNNERS and not is_module_enabled(module_id):
+        session.close()
+        return JSONResponse({"error": f"module '{module_id}' is disabled on this deployment"}, status_code=403)
 
     engine = None
     rest_conn = None

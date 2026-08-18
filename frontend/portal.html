@@ -65,6 +65,24 @@ async function apiFetch(url, opts) {
   return res;
 }
 
+// Plain fetch, not apiFetch - this endpoint is public and a 401
+// redirect would be wrong here regardless. Any failure is swallowed -
+// branding is cosmetic, never lets a network hiccup break the page.
+// No #brandName element on this page (the header only shows the
+// project name, not the product name) and the tab title is just
+// "Client Portal" - nothing to swap there - so this only sets the
+// accent color.
+async function applyBranding() {
+  try {
+    const res = await fetch('/api/branding');
+    if (!res.ok) return;
+    const b = await res.json();
+    document.documentElement.style.setProperty('--accent', b.accent_color);
+  } catch (e) {
+    // swallowed - see the comment above this function
+  }
+}
+
 async function load() {
   const res = await apiFetch('/api/portal/summary');
   if (!res.ok) {
@@ -91,6 +109,7 @@ async function load() {
 }
 
 load();
+applyBranding();
 </script>
 </body>
 </html>
