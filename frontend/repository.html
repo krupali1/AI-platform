@@ -37,6 +37,10 @@
     border-radius: 6px; padding: 8px 14px; cursor: pointer;
   }
   .tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+  .tab-badge {
+    display: inline-block; margin-left: 5px; background: var(--accent); color: #fff;
+    border-radius: 8px; padding: 0 5px; font-size: 10px; line-height: 15px; min-width: 15px; text-align: center;
+  }
 
   .bulk-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
   .bulk-bar-right { display: flex; gap: 8px; }
@@ -335,6 +339,7 @@
       <label><input type="radio" name="actAuth" value="google_oauth" onchange="toggleActAuthFields()" /> Connected Google account</label>
       <label><input type="radio" name="actAuth" value="oauth_provider" onchange="toggleActAuthFields()" /> OAuth-connected app</label>
     </div>
+    <div class="agent-scope"><label><input type="checkbox" id="actRequiresApproval" checked /> Require human approval before sending</label></div>
     <div id="actHeaderFields">
       <input id="actHeaderName" type="text" placeholder="Header name (e.g. Authorization)" value="Authorization" />
       <input id="actValuePrefix" type="text" placeholder="Prefix before the key, if any (e.g. 'Bearer ')" />
@@ -388,6 +393,7 @@
     <button class="tab" id="tabBriefs" onclick="showTab('briefs')">Briefs</button>
     <button class="tab" id="tabContradictions" onclick="showTab('contradictions')">Contradictions</button>
     <button class="tab" id="tabEngine_outputs" onclick="showTab('engine_outputs')">Agent outputs</button>
+    <button class="tab" id="tabPending_actions" onclick="showTab('pending_actions')">Pending approvals<span id="pendingBadge"></span></button>
   </div>
   <div class="bulk-bar">
     <label class="select-all">
@@ -441,16 +447,24 @@ function formatApiError(body, fallback) {
   return fallback;
 }
 
-const TAB_IDS = ['meetings', 'documents', 'open_questions', 'briefs', 'contradictions', 'engine_outputs'];
+const TAB_IDS = ['meetings', 'documents', 'open_questions', 'briefs', 'contradictions', 'engine_outputs', 'pending_actions'];
 let currentTab = 'meetings';
-let cache = { meetings: null, documents: null, open_questions: null, briefs: null, contradictions: null, engine_outputs: null };
-let selected = { meetings: new Set(), documents: new Set(), open_questions: new Set(), briefs: new Set(), contradictions: new Set(), engine_outputs: new Set() };
+let cache = { meetings: null, documents: null, open_questions: null, briefs: null, contradictions: null, engine_outputs: null, pending_actions: null };
+// pending_actions keeps an (always-empty) Set here too - render()/cardHtml's
+// shared preamble calls sel.has(item.id) unconditionally before branching per
+// tab, so this avoids a crash. It stays empty in practice: the pending_actions
+// card template never renders a checkbox, so nothing ever gets added to it.
+let selected = { meetings: new Set(), documents: new Set(), open_questions: new Set(), briefs: new Set(), contradictions: new Set(), engine_outputs: new Set(), pending_actions: new Set() };
 
 function showTab(tab) {
   currentTab = tab;
   TAB_IDS.forEach(t => {
     document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', tab === t);
   });
+  // Pending approvals resolve via Approve/Reject, never a raw delete - hide
+  // the select-all/bulk-delete bar entirely rather than letting it operate
+  // on a tab it was never designed for.
+  document.querySelector('.bulk-bar').style.display = tab === 'pending_actions' ? 'none' : 'flex';
   render();
 }
 
@@ -458,6 +472,8 @@ async function load() {
   const responses = await Promise.all(TAB_IDS.map(t => apiFetch(`/api/records/${t}`)));
   const data = await Promise.all(responses.map(r => r.json()));
   TAB_IDS.forEach((t, i) => { cache[t] = data[i]; });
+  const pendingCount = (cache.pending_actions || []).filter(p => p.status === 'pending').length;
+  document.getElementById('pendingBadge').innerHTML = pendingCount > 0 ? `<span class="tab-badge">${pendingCount}</span>` : '';
   render();
 }
 
@@ -475,6 +491,7 @@ function render() {
       briefs: 'sync a meeting or document first - a project brief gets written automatically.',
       contradictions: 'there simply aren\'t any right now - this only appears if decisions on record genuinely disagree.',
       engine_outputs: 'create a custom agent in Step 2 and run it first.',
+      pending_actions: 'link an agent to an action connector with "Require human approval" checked, then run it - queued sends show up here.',
     };
     list.innerHTML = `<div class="empty-note">No ${currentTab.replace('_', ' ')} yet - ${hints[currentTab] || ''}</div>`;
     return;
@@ -576,6 +593,29 @@ function cardHtml(item, i, sel) {
       </div>`;
   }
 
+  if (currentTab === 'pending_actions') {
+    const date = new Date(item.created_at + (item.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString();
+    const statusBadge = item.status !== 'pending' ? `<span class="tag">${item.status}</span>` : '';
+    const itemActions = item.status === 'pending'
+      ? `<button class="primary" onclick="event.stopPropagation(); approvePending(${item.id})">Approve</button>
+         <button class="item-delete" onclick="event.stopPropagation(); rejectPending(${item.id})">Reject</button>`
+      : '';
+    return `
+      <div class="item" id="item-${i}">
+        <div class="item-body" onclick="toggleItem(${i})">
+          <div class="item-top">
+            <div class="item-title">${item.engine_name || 'Agent output'} → ${item.connector_name || '(connector deleted)'}</div>
+            <div class="item-meta">${date} ${statusBadge}</div>
+          </div>
+          <div class="item-summary">${(item.content || '').slice(0, 180)}${item.content && item.content.length > 180 ? '…' : ''}</div>
+          <div class="item-detail">
+            <pre>${escapeHtml(item.content || '')}</pre>
+            <div class="item-actions">${itemActions}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   // engine_outputs - results from custom, config-driven agents
   const date = new Date(item.created_at + (item.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString();
   return `
@@ -593,6 +633,21 @@ function cardHtml(item, i, sel) {
         </div>
       </div>
     </div>`;
+}
+
+async function approvePending(id) {
+  const res = await apiFetch(`/api/pending-actions/${id}/approve`, { method: 'POST' });
+  const body = await res.json();
+  if (!res.ok || body.error) {
+    alert(body.error ? `Approved, but the send failed: ${body.error}` : formatApiError(body, 'Could not approve'));
+  }
+  await load();
+}
+
+async function rejectPending(id) {
+  if (!confirm('Reject this? It will never be sent.')) return;
+  await apiFetch(`/api/pending-actions/${id}/reject`, { method: 'POST' });
+  await load();
 }
 
 function toggleSelect(id, checked) {
@@ -1058,6 +1113,7 @@ function resetActionConnectorForm() {
   document.getElementById('actHeaderName').value = 'Authorization';
   document.getElementById('actValuePrefix').value = '';
   document.querySelector('input[name="actAuth"][value="header"]').checked = true;
+  document.getElementById('actRequiresApproval').checked = true;
   toggleActAuthFields();
   document.getElementById('actSendResultWrap').style.display = 'none';
 }
@@ -1129,6 +1185,7 @@ async function saveActionConnector() {
     ? parseInt(document.getElementById('actOauthProviderSelect').value, 10) || null
     : null;
   const project_ids = Array.from(document.querySelectorAll('#actProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+  const requires_approval = document.getElementById('actRequiresApproval').checked;
 
   if (!display_name || !url_template || !body_template) {
     alert('Name, target URL, and a body template are all required.');
@@ -1149,7 +1206,7 @@ async function saveActionConnector() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       display_name, description, http_method, url_template, body_template,
-      auth_style, auth_header_name, auth_value_prefix, oauth_provider_id, project_ids,
+      auth_style, auth_header_name, auth_value_prefix, oauth_provider_id, requires_approval, project_ids,
     }),
   });
   if (!res.ok) {

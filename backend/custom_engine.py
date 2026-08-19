@@ -116,13 +116,28 @@ def _send_to_action_connector(session, client, engine, content):
     success/error entry under the connector's module_id, so a failed
     send doesn't read as a failed generation) and does NOT re-raise, so
     run_custom_engine still returns {"generated": True} and api_run's
-    dispatch needs no new branching to handle this case."""
+    dispatch needs no new branching to handle this case.
+
+    When the connector requires approval, this queues a PendingAction
+    instead of sending - the actual send happens later, from a human
+    clicking Approve (see main.py's approve endpoint), which calls
+    action_connector.send_action directly rather than going back
+    through here."""
     import action_connector
-    from models import ActionConnector
+    from models import ActionConnector, PendingAction
     connector = session.query(ActionConnector).filter_by(id=engine.action_connector_id).first()
     if not connector:
         _log(session, client, engine.module_id, "warning",
              f"{engine.display_name}'s linked action connector no longer exists - nothing sent.")
+        return
+    if connector.requires_approval:
+        session.add(PendingAction(
+            client_id=client.id, engine_id=engine.id, engine_name=engine.display_name,
+            connector_id=connector.id, connector_name=connector.display_name, content=content,
+        ))
+        session.commit()
+        _log(session, client, engine.module_id, "success",
+             f"{engine.display_name} generated a result - awaiting approval before sending to {connector.display_name}.")
         return
     try:
         action_connector.send_action(session, client, connector, content, engine_name=engine.display_name)

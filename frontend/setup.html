@@ -398,6 +398,7 @@
       <label><input type="radio" name="actAuth" value="google_oauth" onchange="toggleActAuthFields()" /> Connected Google account</label>
       <label><input type="radio" name="actAuth" value="oauth_provider" onchange="toggleActAuthFields()" /> OAuth-connected app</label>
     </div>
+    <div class="agent-scope"><label><input type="checkbox" id="actRequiresApproval" checked /> Require human approval before sending</label></div>
     <div id="actHeaderFields">
       <input id="actHeaderName" type="text" placeholder="Header name (e.g. Authorization)" value="Authorization" />
       <input id="actValuePrefix" type="text" placeholder="Prefix before the key, if any (e.g. 'Bearer ')" />
@@ -659,6 +660,9 @@ function moduleBadges(m) {
   if (m.engine_id && m.trigger_type === 'schedule' && m.schedule_interval_minutes) {
     badges.push(`<span class="tag">⏱ every ${m.schedule_interval_minutes}m</span>`);
   }
+  if (m.engine_id && m.paused) {
+    badges.push(`<span class="tag" style="opacity:.7;">⏸ paused</span>`);
+  }
   if (m.engine_id && m.action_connector_name) {
     badges.push(`<span class="tag">→ sends to ${m.action_connector_name}</span>`);
   }
@@ -685,6 +689,11 @@ async function fetchModules() {
           ${m.engine_id && currentRole !== 'viewer' ? `
             <button class="conn-icon-btn conn-icon-edit" onclick="openEditAgent(${m.engine_id})" title="Edit agent" aria-label="Edit agent">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+            <button class="conn-icon-btn conn-icon-edit" onclick="toggleEnginePause(${m.engine_id}, ${!m.paused})" title="${m.paused ? 'Resume' : 'Pause'} agent" aria-label="${m.paused ? 'Resume' : 'Pause'} agent">
+              ${m.paused
+                ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>`
+                : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`}
             </button>
             <button class="conn-icon-btn conn-icon-delete" onclick="deleteAgent(${m.engine_id})" title="Delete agent" aria-label="Delete agent">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
@@ -830,6 +839,14 @@ async function saveAgent() {
 async function deleteAgent(engineId) {
   if (!confirm('Delete this agent? Its past outputs stay in the Repository, but it will stop showing up here.')) return;
   await apiFetch(`/api/engines/${engineId}`, { method: 'DELETE' });
+  await fetchModules();
+}
+
+// Pause only blocks the scheduled loop's unattended auto-firing - a manual
+// RUN still works on a paused agent, so this is a soft kill switch, not a
+// full stop.
+async function toggleEnginePause(engineId, pauseTo) {
+  await apiFetch(`/api/engines/${engineId}/${pauseTo ? 'pause' : 'unpause'}`, { method: 'POST' });
   await fetchModules();
 }
 
@@ -1135,6 +1152,7 @@ function resetActionConnectorForm() {
   document.getElementById('actHeaderName').value = 'Authorization';
   document.getElementById('actValuePrefix').value = '';
   document.querySelector('input[name="actAuth"][value="header"]').checked = true;
+  document.getElementById('actRequiresApproval').checked = true;
   toggleActAuthFields();
   document.getElementById('actSendResultWrap').style.display = 'none';
 }
@@ -1164,6 +1182,7 @@ async function openEditActionConnector(connectorId) {
   document.getElementById('actValuePrefix').value = conn.auth_value_prefix || '';
   document.getElementById('actUrl').value = conn.url_template || '';
   document.getElementById('actBodyTemplate').value = conn.body_template || '';
+  document.getElementById('actRequiresApproval').checked = conn.requires_approval;
   toggleActAuthFields();
 
   const providers = await loadActOauthProviders();
@@ -1236,6 +1255,7 @@ async function saveActionConnector() {
     ? parseInt(document.getElementById('actOauthProviderSelect').value, 10) || null
     : null;
   const project_ids = Array.from(document.querySelectorAll('#actProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+  const requires_approval = document.getElementById('actRequiresApproval').checked;
 
   if (!display_name || !url_template || !body_template) {
     alert('Name, target URL, and a body template are all required.');
@@ -1256,7 +1276,7 @@ async function saveActionConnector() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       display_name, description, http_method, url_template, body_template,
-      auth_style, auth_header_name, auth_value_prefix, oauth_provider_id, project_ids,
+      auth_style, auth_header_name, auth_value_prefix, oauth_provider_id, requires_approval, project_ids,
     }),
   });
   if (!res.ok) {

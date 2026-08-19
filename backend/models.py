@@ -5,7 +5,7 @@ Document, Decision, ActionItem, and an Event log that stands in for
 the event bus / audit log described in the architecture doc.
 """
 import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -174,6 +174,7 @@ class PromptEngine(Base):
     schedule_interval_minutes = Column(Integer, nullable=True)   # only meaningful when trigger_type == "schedule"
     next_run_at = Column(DateTime, nullable=True)                # only meaningful when trigger_type == "schedule"
     action_connector_id = Column(Integer, ForeignKey("action_connectors.id"), nullable=True)
+    paused = Column(Boolean, default=False)   # kill switch - blocks the scheduled loop from firing this agent, not manual RUN
 
 
 class PromptEngineProject(Base):
@@ -324,6 +325,7 @@ class ActionConnector(Base):
     auth_value_prefix = Column(String, default="")
     oauth_provider_id = Column(Integer, ForeignKey("oauth_providers.id"), nullable=True)
     body_template = Column(Text)
+    requires_approval = Column(Boolean, default=True)  # gate sends behind a human approve/reject step - see PendingAction
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -345,6 +347,30 @@ class ActionConnectorCredential(Base):
     connector_id = Column(Integer, ForeignKey("action_connectors.id"))
     client_id = Column(Integer, ForeignKey("clients.id"))
     encrypted_value = Column(Text)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class PendingAction(Base):
+    """A queued send, created when an ActionConnector with
+    requires_approval=True would otherwise have fired immediately -
+    the "Command"/human-oversight layer for outbound sends. Denormalizes
+    engine_name/connector_name the same way EngineOutput denormalizes
+    engine_name: delete_engine and delete_action_connector don't
+    cascade to dependents, so a pending or already-resolved row must
+    still read sensibly if its source engine/connector is deleted
+    later - it stays reviewable via the denormalized names rather than
+    being cascade-deleted."""
+    __tablename__ = "pending_actions"
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    engine_id = Column(Integer, ForeignKey("prompt_engines.id"), nullable=True)
+    engine_name = Column(String)
+    connector_id = Column(Integer, ForeignKey("action_connectors.id"), nullable=True)
+    connector_name = Column(String)
+    content = Column(Text)
+    status = Column(String, default="pending")   # "pending" | "approved" | "rejected"
+    decided_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    decided_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 

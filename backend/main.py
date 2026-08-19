@@ -12,7 +12,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from database import init_db, SessionLocal
-from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, RestConnectorResource, ActionConnector, ActionConnectorProject, ActionConnectorCredential, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
+from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, RestConnectorResource, ActionConnector, ActionConnectorProject, ActionConnectorCredential, PendingAction, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
 from manifest import MODULES, CONNECTOR_PRESETS, is_module_enabled
 from auth import oauth, is_email_allowed, is_admin_email
 from crypto import encrypt, decrypt
@@ -1122,6 +1122,7 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             "engine_id": engine.id,
             "trigger_type": engine.trigger_type or "manual",
             "schedule_interval_minutes": engine.schedule_interval_minutes,
+            "paused": bool(engine.paused),
             "action_connector_id": engine.action_connector_id,
             "action_connector_name": action_connector_name,
             "last_status": last_event.status if last_event else None,
@@ -1234,6 +1235,7 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             "connector_id": ac.id,
             "auth_style": ac.auth_style,
             "needs_credential": needs_credential,
+            "requires_approval": bool(ac.requires_approval),
             "last_status": last_event.status if last_event else None,
             "last_run": last_event.created_at.isoformat() if last_event else None,
             "last_message": last_event.message if last_event else None,
@@ -1424,6 +1426,38 @@ def delete_engine(engine_id: int, user: User = Depends(require_role("admin", "me
     session.commit()
     session.close()
     return {"ok": True}
+
+
+@app.post("/api/engines/{engine_id}/pause")
+def pause_engine(engine_id: int, user: User = Depends(require_role("admin", "member"))):
+    """Kill switch for the scheduled loop only - a paused agent never
+    comes up as due in _scheduled_agent_loop's query, but a human
+    clicking RUN manually still works regardless, since that's already
+    the controlled action pause exists to protect the absence of."""
+    session = SessionLocal()
+    engine = session.query(PromptEngine).filter_by(id=engine_id).first()
+    if not engine:
+        session.close()
+        raise HTTPException(404, "agent not found")
+    engine.paused = True
+    session.commit()
+    out = {"ok": True, "paused": engine.paused}
+    session.close()
+    return out
+
+
+@app.post("/api/engines/{engine_id}/unpause")
+def unpause_engine(engine_id: int, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    engine = session.query(PromptEngine).filter_by(id=engine_id).first()
+    if not engine:
+        session.close()
+        raise HTTPException(404, "agent not found")
+    engine.paused = False
+    session.commit()
+    out = {"ok": True, "paused": engine.paused}
+    session.close()
+    return out
 
 
 class RestConnectorPayload(BaseModel):
@@ -1763,6 +1797,7 @@ class ActionConnectorPayload(BaseModel):
     auth_value_prefix: str = ""
     oauth_provider_id: Optional[int] = None
     body_template: str
+    requires_approval: bool = True
     project_ids: list[int] = []
 
 
@@ -1840,6 +1875,7 @@ def list_action_connectors(user: User = Depends(get_current_user)):
             "url_template": c.url_template, "http_method": c.http_method or "POST", "auth_style": c.auth_style,
             "auth_header_name": c.auth_header_name, "auth_value_prefix": c.auth_value_prefix,
             "oauth_provider_id": c.oauth_provider_id, "body_template": c.body_template,
+            "requires_approval": bool(c.requires_approval),
             "project_ids": [l.client_id for l in links],
         })
     session.close()
@@ -1877,6 +1913,7 @@ def create_action_connector(payload: ActionConnectorPayload, request: Request, u
         auth_value_prefix=payload.auth_value_prefix,
         oauth_provider_id=payload.oauth_provider_id if payload.auth_style == "oauth_provider" else None,
         body_template=payload.body_template.strip(),
+        requires_approval=payload.requires_approval,
         created_by_id=user.id,
     )
     session.add(ac)
@@ -1918,6 +1955,7 @@ def update_action_connector(connector_id: int, payload: ActionConnectorPayload, 
     ac.auth_value_prefix = payload.auth_value_prefix
     ac.oauth_provider_id = payload.oauth_provider_id if payload.auth_style == "oauth_provider" else None
     ac.body_template = payload.body_template.strip()
+    ac.requires_approval = payload.requires_approval
 
     existing_links = session.query(ActionConnectorProject).filter_by(connector_id=connector_id).all()
     existing_project_ids = {l.client_id for l in existing_links}
@@ -1991,6 +2029,58 @@ def clear_action_connector_credential(connector_id: int, request: Request, user:
         raise HTTPException(400, "No project selected")
     require_project_admin(user, project.id, session)
     session.query(ActionConnectorCredential).filter_by(connector_id=connector_id, client_id=project.id).delete()
+    session.commit()
+    session.close()
+    return {"ok": True}
+
+
+# ---------- Pending actions: the human approval gate on outbound sends ----------
+# Gated require_role("admin","member") - the same level as composing/using agents
+# and connectors everywhere else, not the stricter require_project_admin reserved
+# for entering a raw credential. Approving a send is a judgment call about
+# already-generated content, not access to a secret - a member who can already
+# create the agent and connector involved can also approve what it sends,
+# otherwise a member-created scheduled agent's queue could get stuck behind an
+# admin who isn't watching.
+
+@app.post("/api/pending-actions/{pending_id}/approve")
+def approve_pending_action(pending_id: int, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    pa = session.query(PendingAction).filter_by(id=pending_id, status="pending").first()
+    if not pa:
+        session.close()
+        raise HTTPException(404, "pending action not found or already decided")
+    client = session.query(Client).filter_by(id=pa.client_id).first()
+    connector = session.query(ActionConnector).filter_by(id=pa.connector_id).first() if pa.connector_id else None
+    # Set to "approved" before attempting the send, regardless of outcome - a
+    # failed delivery is a delivery problem, not a reversal of the human's
+    # decision, so the record of "a human said yes" stands either way.
+    pa.status = "approved"
+    pa.decided_by_id = user.id
+    pa.decided_at = datetime.datetime.utcnow()
+    session.commit()
+    if not connector:
+        session.close()
+        return JSONResponse({"ok": True, "sent": False, "error": "the linked action connector no longer exists"}, status_code=200)
+    try:
+        result = action_connector.send_action(session, client, connector, pa.content, engine_name=pa.engine_name)
+        session.close()
+        return {"ok": True, "sent": result["sent"]}
+    except Exception as e:
+        session.close()
+        return JSONResponse({"ok": True, "sent": False, "error": str(e)}, status_code=502)
+
+
+@app.post("/api/pending-actions/{pending_id}/reject")
+def reject_pending_action(pending_id: int, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    pa = session.query(PendingAction).filter_by(id=pending_id, status="pending").first()
+    if not pa:
+        session.close()
+        raise HTTPException(404, "pending action not found or already decided")
+    pa.status = "rejected"
+    pa.decided_by_id = user.id
+    pa.decided_at = datetime.datetime.utcnow()
     session.commit()
     session.close()
     return {"ok": True}
@@ -2371,6 +2461,7 @@ async def _scheduled_agent_loop():
                 PromptEngine.trigger_type == "schedule",
                 PromptEngine.next_run_at.isnot(None),
                 PromptEngine.next_run_at <= now,
+                PromptEngine.paused.isnot(True),   # covers NULL and False - a paused agent never comes up as due
             ).all()
             for engine in due:
                 try:
@@ -2505,7 +2596,11 @@ def api_records(record_type: str, request: Request, user: User = Depends(get_cur
     if not client:
         session.close()
         return []
-    model_map = {"meetings": Meeting, "documents": Document, "decisions": Decision, "action_items": ActionItem, "open_questions": OpenQuestion, "briefs": Brief, "contradictions": Contradiction, "engine_outputs": EngineOutput}
+    # pending_actions is deliberately GET-only here - not in the DELETE or
+    # bulk-delete model_maps below, since a pending item's only valid
+    # resolution is approve/reject (see the pending-actions endpoints
+    # above), not a raw delete that would leave no record of why.
+    model_map = {"meetings": Meeting, "documents": Document, "decisions": Decision, "action_items": ActionItem, "open_questions": OpenQuestion, "briefs": Brief, "contradictions": Contradiction, "engine_outputs": EngineOutput, "pending_actions": PendingAction}
     model = model_map.get(record_type)
     if not model:
         session.close()

@@ -431,6 +431,7 @@
       <label><input type="radio" name="actAuth" value="google_oauth" onchange="toggleActAuthFields()" /> Connected Google account</label>
       <label><input type="radio" name="actAuth" value="oauth_provider" onchange="toggleActAuthFields()" /> OAuth-connected app</label>
     </div>
+    <div class="agent-scope"><label><input type="checkbox" id="actRequiresApproval" checked /> Require human approval before sending</label></div>
     <div id="actHeaderFields">
       <input id="actHeaderName" type="text" placeholder="Header name (e.g. Authorization)" value="Authorization" />
       <input id="actValuePrefix" type="text" placeholder="Prefix before the key, if any (e.g. 'Bearer ')" />
@@ -1007,6 +1008,7 @@ function resetActionConnectorForm() {
   document.getElementById('actHeaderName').value = 'Authorization';
   document.getElementById('actValuePrefix').value = '';
   document.querySelector('input[name="actAuth"][value="header"]').checked = true;
+  document.getElementById('actRequiresApproval').checked = true;
   toggleActAuthFields();
   document.getElementById('actSendResultWrap').style.display = 'none';
 }
@@ -1078,6 +1080,7 @@ async function saveActionConnector() {
     ? parseInt(document.getElementById('actOauthProviderSelect').value, 10) || null
     : null;
   const project_ids = Array.from(document.querySelectorAll('#actProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+  const requires_approval = document.getElementById('actRequiresApproval').checked;
 
   if (!display_name || !url_template || !body_template) {
     alert('Name, target URL, and a body template are all required.');
@@ -1098,7 +1101,7 @@ async function saveActionConnector() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       display_name, description, http_method, url_template, body_template,
-      auth_style, auth_header_name, auth_value_prefix, oauth_provider_id, project_ids,
+      auth_style, auth_header_name, auth_value_prefix, oauth_provider_id, requires_approval, project_ids,
     }),
   });
   if (!res.ok) {
