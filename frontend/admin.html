@@ -198,7 +198,7 @@
   .project-checklist label { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11.5px; color: var(--text); }
   .project-checklist input { accent-color: var(--accent); }
   .project-checklist .empty-note { margin: 0; font-size: 11.5px; }
-  #connHeaderFields { display: flex; flex-direction: column; gap: 8px; }
+  #connHeaderFields, #actHeaderFields { display: flex; flex-direction: column; gap: 8px; }
   .conn-detect-sample { margin-top: 8px; }
   .conn-detect-sample pre {
     white-space: pre-wrap; word-break: break-all; font-family: var(--mono); font-size: 11px; color: var(--text);
@@ -216,6 +216,7 @@
       <button class="header-new-btn" id="newProjectBtn" onclick="toggleNewProject()">+ New Project</button>
       <button class="header-new-btn" onclick="toggleNewAgent()">+ New Agent</button>
       <button class="header-new-btn" onclick="toggleNewConnector()">+ New Connector</button>
+      <button class="header-new-btn" onclick="toggleNewActionConnector()">+ New Action Connector</button>
     </div>
     <div class="project-new-form header-dropdown" id="projectNewForm">
       <input id="newProjectName" type="text" placeholder="Project name (e.g. LKS Law Firm)" />
@@ -235,7 +236,7 @@
     <input id="agentName" type="text" placeholder="Agent name (e.g. Risk Tracker)" />
     <input id="agentDescription" type="text" placeholder="One-line description" />
     <div class="agent-reads">
-      <span class="agent-reads-label">Reads:</span>
+      <span class="agent-reads-label">Reads (optional):</span>
       <label><input type="checkbox" value="Meeting" checked /> Meetings</label>
       <label><input type="checkbox" value="Document" checked /> Documents</label>
       <label><input type="checkbox" value="Decision" /> Decisions</label>
@@ -243,7 +244,19 @@
       <label><input type="checkbox" value="OpenQuestion" /> Open questions</label>
       <label><input type="checkbox" value="Brief" /> Briefs</label>
     </div>
-    <textarea id="agentPrompt" placeholder="What should this agent do with the records it reads? e.g. 'List anything that looks like a risk to this engagement succeeding.'"></textarea>
+    <textarea id="agentPrompt" placeholder="What should this agent do? e.g. 'List anything that looks like a risk to this engagement succeeding.' Leave 'Reads' unchecked for a prompt-only agent with no records step."></textarea>
+    <span class="agent-reads-label">Runs:</span>
+    <div class="agent-scope">
+      <label><input type="radio" name="agentTrigger" value="manual" checked onchange="toggleAgentScheduleFields()" /> Manually (click RUN)</label>
+      <label><input type="radio" name="agentTrigger" value="schedule" onchange="toggleAgentScheduleFields()" /> On a schedule</label>
+    </div>
+    <div id="agentScheduleFields" style="display:none;">
+      <input id="agentScheduleInterval" type="text" inputmode="numeric" placeholder="Every how many minutes? (minimum 5)" />
+    </div>
+    <span class="agent-reads-label">Send output to:</span>
+    <select id="agentActionConnector">
+      <option value="">Don't send anywhere - just save the result</option>
+    </select>
     <span class="agent-reads-label">Applies to:</span>
     <div id="agentProjectChecklist" class="project-checklist"></div>
     <button class="primary" onclick="createAgent()">Create agent</button>
@@ -300,6 +313,45 @@
     <span class="agent-reads-label">Applies to:</span>
     <div id="connProjectChecklist" class="project-checklist"></div>
     <button class="primary" id="newConnectorSubmitBtn" onclick="saveConnector()">Create connector</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="newActionConnectorOverlay" onclick="if(event.target===this) toggleNewActionConnector()">
+  <div class="project-new-form agent-form" id="newActionConnectorForm">
+    <div class="modal-header">
+      <h4>New action connector</h4>
+      <button class="modal-close" onclick="toggleNewActionConnector()">✕</button>
+    </div>
+    <p class="tp-hint" style="margin:-2px 0 4px;">Posts an agent's generated output to a third-party API - link it from an agent's "Send output to" field. Available everywhere - pick which project it applies to below, or make it available to every project.</p>
+    <input id="actName" type="text" placeholder="Connector name (e.g. Slack risk alerts)" />
+    <input id="actDescription" type="text" placeholder="One-line description" />
+    <select id="actHttpMethod">
+      <option value="POST">POST</option>
+      <option value="PUT">PUT</option>
+    </select>
+    <div class="agent-scope">
+      <label><input type="radio" name="actAuth" value="header" checked onchange="toggleActAuthFields()" /> Static API key</label>
+      <label><input type="radio" name="actAuth" value="google_oauth" onchange="toggleActAuthFields()" /> Connected Google account</label>
+      <label><input type="radio" name="actAuth" value="oauth_provider" onchange="toggleActAuthFields()" /> OAuth-connected app</label>
+    </div>
+    <div id="actHeaderFields">
+      <input id="actHeaderName" type="text" placeholder="Header name (e.g. Authorization)" value="Authorization" />
+      <input id="actValuePrefix" type="text" placeholder="Prefix before the key, if any (e.g. 'Bearer ')" />
+      <input id="actTestKey" type="password" placeholder="API key, to test with below (optional if already saved in Team & Keys)" />
+    </div>
+    <div id="actOauthProviderFields" style="display:none;">
+      <select id="actOauthProviderSelect"></select>
+      <p class="tp-hint" style="margin:4px 0;">No providers registered yet? An admin adds one from the Admin page first.</p>
+    </div>
+    <input id="actUrl" type="text" placeholder="Target URL - usually fixed (a Slack webhook, an API endpoint). {query}/{domain} optional, for the rare case it varies by project." />
+    <textarea id="actBodyTemplate" placeholder='JSON body, e.g. {"text": "{content}"} - available: {content}, {project_name}, {date}, {engine_name}'></textarea>
+    <button type="button" class="tp-advanced-toggle" id="actTestSendBtn" onclick="testActionSend()">Test send (sends a real sample payload)</button>
+    <div class="conn-detect-sample" id="actSendResultWrap" style="display:none;">
+      <pre id="actSendResult"></pre>
+    </div>
+    <span class="agent-reads-label">Applies to:</span>
+    <div id="actProjectChecklist" class="project-checklist"></div>
+    <button class="primary" onclick="saveActionConnector()">Create action connector</button>
   </div>
 </div>
 
@@ -630,11 +682,34 @@ function renderProjectChecklist(containerId, checkedIds) {
   `).join('');
 }
 
-function toggleNewAgent() {
+function toggleAgentScheduleFields() {
+  const style = document.querySelector('input[name="agentTrigger"]:checked').value;
+  document.getElementById('agentScheduleFields').style.display = style === 'schedule' ? 'block' : 'none';
+}
+
+async function loadAgentActionConnectors() {
+  const res = await apiFetch('/api/action-connectors');
+  const connectors = await res.json();
+  const select = document.getElementById('agentActionConnector');
+  const keep = select.querySelector('option[value=""]');
+  select.innerHTML = '';
+  select.appendChild(keep);
+  connectors.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.display_name;
+    select.appendChild(opt);
+  });
+}
+
+async function toggleNewAgent() {
   const overlay = document.getElementById('newAgentOverlay');
   const opening = !overlay.classList.contains('open');
   overlay.classList.toggle('open', opening);
-  if (opening) renderProjectChecklist('agentProjectChecklist');
+  if (opening) {
+    renderProjectChecklist('agentProjectChecklist');
+    await loadAgentActionConnectors();
+  }
 }
 
 async function createAgent() {
@@ -643,14 +718,21 @@ async function createAgent() {
   const prompt_template = document.getElementById('agentPrompt').value.trim();
   const reads = Array.from(document.querySelectorAll('.agent-reads input:checked')).map(i => i.value).join(', ');
   const project_ids = Array.from(document.querySelectorAll('#agentProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
-  if (!display_name || !prompt_template || !reads) {
-    alert('Name, at least one "reads" type, and a prompt are all required.');
+  const trigger_type = document.querySelector('input[name="agentTrigger"]:checked').value;
+  const schedule_interval_minutes = trigger_type === 'schedule' ? (parseInt(document.getElementById('agentScheduleInterval').value, 10) || null) : null;
+  const action_connector_id = parseInt(document.getElementById('agentActionConnector').value, 10) || null;
+  if (!display_name || !prompt_template) {
+    alert('Name and a prompt are required.');
+    return;
+  }
+  if (trigger_type === 'schedule' && (!schedule_interval_minutes || schedule_interval_minutes < 5)) {
+    alert('Pick an interval of at least 5 minutes for a scheduled agent.');
     return;
   }
   const res = await apiFetch('/api/engines', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ display_name, description, reads, prompt_template, project_ids }),
+    body: JSON.stringify({ display_name, description, reads, prompt_template, project_ids, trigger_type, schedule_interval_minutes, action_connector_id }),
   });
   if (!res.ok) {
     const body = await res.json();
@@ -660,6 +742,10 @@ async function createAgent() {
   document.getElementById('agentName').value = '';
   document.getElementById('agentDescription').value = '';
   document.getElementById('agentPrompt').value = '';
+  document.getElementById('agentScheduleInterval').value = '';
+  document.getElementById('agentActionConnector').value = '';
+  document.querySelector('input[name="agentTrigger"][value="manual"]').checked = true;
+  toggleAgentScheduleFields();
   document.getElementById('newAgentOverlay').classList.remove('open');
 }
 
@@ -863,6 +949,140 @@ async function saveConnector() {
   editingConnectorId = null;
   resetConnectorForm();
   document.getElementById('newConnectorOverlay').classList.remove('open');
+}
+
+let editingActionConnectorId = null;
+
+async function toggleNewActionConnector() {
+  const overlay = document.getElementById('newActionConnectorOverlay');
+  const opening = !overlay.classList.contains('open');
+  if (opening) {
+    resetActionConnectorForm();
+    renderProjectChecklist('actProjectChecklist');
+    await loadActOauthProviders();
+  }
+  overlay.classList.toggle('open', opening);
+}
+
+async function loadActOauthProviders() {
+  const res = await apiFetch('/api/oauth-providers');
+  const providers = await res.json();
+  const select = document.getElementById('actOauthProviderSelect');
+  select.innerHTML = providers.length
+    ? providers.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
+    : '<option value="">No providers registered yet</option>';
+  return providers;
+}
+
+function resetActionConnectorForm() {
+  ['actName', 'actDescription', 'actUrl', 'actBodyTemplate', 'actTestKey']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('actHttpMethod').value = 'POST';
+  document.getElementById('actHeaderName').value = 'Authorization';
+  document.getElementById('actValuePrefix').value = '';
+  document.querySelector('input[name="actAuth"][value="header"]').checked = true;
+  toggleActAuthFields();
+  document.getElementById('actSendResultWrap').style.display = 'none';
+}
+
+function toggleActAuthFields() {
+  const style = document.querySelector('input[name="actAuth"]:checked').value;
+  document.getElementById('actHeaderFields').style.display = style === 'header' ? 'flex' : 'none';
+  document.getElementById('actOauthProviderFields').style.display = style === 'oauth_provider' ? 'block' : 'none';
+}
+
+// Unlike testAndDetectFields (a safe read-only GET), this actually POSTs
+// a labeled sample payload to the live target - confirm() gates it so a
+// careless click during setup doesn't silently post into a real channel.
+async function testActionSend() {
+  const url_template = document.getElementById('actUrl').value.trim();
+  const body_template = document.getElementById('actBodyTemplate').value.trim();
+  if (!url_template || !body_template) {
+    alert('Enter a target URL and a body template first.');
+    return;
+  }
+  if (!confirm('This will actually send a sample payload to the URL above - continue?')) return;
+
+  const http_method = document.getElementById('actHttpMethod').value;
+  const auth_style = document.querySelector('input[name="actAuth"]:checked').value;
+  const auth_header_name = document.getElementById('actHeaderName').value.trim();
+  const auth_value_prefix = document.getElementById('actValuePrefix').value;
+  const test_key = document.getElementById('actTestKey').value.trim();
+  const oauth_provider_id = auth_style === 'oauth_provider'
+    ? parseInt(document.getElementById('actOauthProviderSelect').value, 10) || null
+    : null;
+
+  const btn = document.getElementById('actTestSendBtn');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const res = await apiFetch('/api/action-connectors/test-send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url_template, http_method, body_template, auth_style, auth_header_name, auth_value_prefix,
+        oauth_provider_id, connector_id: editingActionConnectorId, test_key: test_key || null,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      alert(formatApiError(body, 'Test send failed'));
+      return;
+    }
+    document.getElementById('actSendResult').textContent =
+      `Status ${body.status_code}\n\nSent body:\n${JSON.stringify(body.sent_body, null, 2)}\n\nResponse:\n${body.response_body}`;
+    document.getElementById('actSendResultWrap').style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+async function saveActionConnector() {
+  const display_name = document.getElementById('actName').value.trim();
+  const description = document.getElementById('actDescription').value.trim();
+  const http_method = document.getElementById('actHttpMethod').value;
+  const url_template = document.getElementById('actUrl').value.trim();
+  const body_template = document.getElementById('actBodyTemplate').value.trim();
+  const auth_style = document.querySelector('input[name="actAuth"]:checked').value;
+  const auth_header_name = document.getElementById('actHeaderName').value.trim();
+  const auth_value_prefix = document.getElementById('actValuePrefix').value;
+  const oauth_provider_id = auth_style === 'oauth_provider'
+    ? parseInt(document.getElementById('actOauthProviderSelect').value, 10) || null
+    : null;
+  const project_ids = Array.from(document.querySelectorAll('#actProjectChecklist .proj-check:checked')).map(i => parseInt(i.value, 10));
+
+  if (!display_name || !url_template || !body_template) {
+    alert('Name, target URL, and a body template are all required.');
+    return;
+  }
+  if (!body_template.includes('{content}')) {
+    alert('The body template must include {content} - otherwise the agent\'s output is never actually sent.');
+    return;
+  }
+  if (auth_style === 'oauth_provider' && !oauth_provider_id) {
+    alert('Pick an OAuth provider - if none are listed, an admin needs to register one first.');
+    return;
+  }
+
+  const isEdit = editingActionConnectorId !== null;
+  const res = await apiFetch(isEdit ? `/api/action-connectors/${editingActionConnectorId}` : '/api/action-connectors', {
+    method: isEdit ? 'PATCH' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      display_name, description, http_method, url_template, body_template,
+      auth_style, auth_header_name, auth_value_prefix, oauth_provider_id, project_ids,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json();
+    alert(formatApiError(body, isEdit ? 'Could not save changes' : 'Could not create action connector'));
+    return;
+  }
+  editingActionConnectorId = null;
+  resetActionConnectorForm();
+  document.getElementById('newActionConnectorOverlay').classList.remove('open');
 }
 
 loadUsers();
