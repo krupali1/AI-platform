@@ -166,10 +166,14 @@ class PromptEngine(Base):
     module_id = Column(String, unique=True)          # slug used for dispatch, e.g. "risk-tracker"
     display_name = Column(String)
     description = Column(Text)
-    reads = Column(Text)                              # comma-separated: "Meeting,Document,Decision"
+    reads = Column(Text)                              # comma-separated: "Meeting,Document,Decision" - optional, blank means no records step
     prompt_template = Column(Text)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    trigger_type = Column(String, default="manual")             # "manual" | "schedule"
+    schedule_interval_minutes = Column(Integer, nullable=True)   # only meaningful when trigger_type == "schedule"
+    next_run_at = Column(DateTime, nullable=True)                # only meaningful when trigger_type == "schedule"
+    action_connector_id = Column(Integer, ForeignKey("action_connectors.id"), nullable=True)
 
 
 class PromptEngineProject(Base):
@@ -277,6 +281,71 @@ class RestConnectorResource(Base):
     client_id = Column(Integer, ForeignKey("clients.id"))
     resource_id = Column(String)      # e.g. a GitHub repo's "owner/name" full_name
     resource_label = Column(String)   # display label - same as resource_id for GitHub
+
+
+class ActionConnector(Base):
+    """The outbound sibling of RestConnector - the SHAPE of how to POST
+    an agent's generated output to a third-party REST API (a Slack
+    incoming webhook, a generic API endpoint), not the credential
+    itself (ActionConnectorCredential, kept separate for the same
+    reason RestConnectorCredential is - one connector definition used
+    by several projects can still take a different key per project).
+
+    Which projects a connector actually runs for is tracked in
+    ActionConnectorProject, a real many-to-many - see
+    PromptEngineProject for why.
+
+    Unlike RestConnector there is no content_type/results_path/field_*
+    - nothing is parsed back out of the response; the response is only
+    ever logged (see action_connector.py), never stored as a record.
+    url_template deliberately isn't named search_url_template - it
+    isn't a search, it's usually a fixed target (a single webhook URL),
+    though {query}/{domain} substitution is still supported for parity
+    with RestConnector and for the rare case a target genuinely varies
+    by project.
+
+    body_template is a JSON template string - e.g. '{"text": "{content}"}'
+    - with {content} (the agent's generated text output), plus
+    {project_name}, {date}, and {engine_name} available the same way
+    {query}/{domain} are available in url_template. Each value is
+    JSON-string-escaped before substitution so the result is always
+    valid JSON, even if the generated content itself contains quotes
+    or newlines - see action_connector.py's render_body."""
+    __tablename__ = "action_connectors"
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)   # which project it was created from, if any - doesn't control where it runs
+    module_id = Column(String, unique=True)
+    display_name = Column(String)
+    description = Column(Text)
+    url_template = Column(Text)
+    http_method = Column(String, default="POST")     # "POST" | "PUT"
+    auth_style = Column(String, default="header")     # "header" | "google_oauth" | "oauth_provider"
+    auth_header_name = Column(String, default="Authorization")
+    auth_value_prefix = Column(String, default="")
+    oauth_provider_id = Column(Integer, ForeignKey("oauth_providers.id"), nullable=True)
+    body_template = Column(Text)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class ActionConnectorProject(Base):
+    """Which projects a given action connector actually runs for - see
+    PromptEngineProject/RestConnectorProject, same reasoning."""
+    __tablename__ = "action_connector_projects"
+    id = Column(Integer, primary_key=True)
+    connector_id = Column(Integer, ForeignKey("action_connectors.id"))
+    client_id = Column(Integer, ForeignKey("clients.id"))
+
+
+class ActionConnectorCredential(Base):
+    """The actual per-project secret for a header-auth ActionConnector -
+    see RestConnectorCredential. Only used when auth_style == 'header'."""
+    __tablename__ = "action_connector_credentials"
+    id = Column(Integer, primary_key=True)
+    connector_id = Column(Integer, ForeignKey("action_connectors.id"))
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    encrypted_value = Column(Text)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 class OAuthProvider(Base):

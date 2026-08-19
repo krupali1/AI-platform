@@ -12,7 +12,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from database import init_db, SessionLocal
-from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, RestConnectorResource, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
+from models import Client, Meeting, Document, Decision, ActionItem, OpenQuestion, Brief, Contradiction, PromptEngine, PromptEngineProject, EngineOutput, RestConnector, RestConnectorProject, RestConnectorCredential, RestConnectorResource, ActionConnector, ActionConnectorProject, ActionConnectorCredential, OAuthProvider, OAuthConnection, Event, User, ProjectMembership
 from manifest import MODULES, CONNECTOR_PRESETS, is_module_enabled
 from auth import oauth, is_email_allowed, is_admin_email
 from crypto import encrypt, decrypt
@@ -23,6 +23,7 @@ import contradiction
 import email_connector
 import custom_engine
 import rest_connector
+import action_connector
 import oauth_generic
 import llm_client
 import qa
@@ -148,6 +149,7 @@ def startup():
     _migrate_scope_to_project_links()
     _migrate_project_admins()
     asyncio.create_task(_auto_sync_loop())
+    asyncio.create_task(_scheduled_agent_loop())
 
 
 def _migrate_scope_to_project_links():
@@ -1105,6 +1107,10 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
                 .order_by(Event.created_at.desc())
                 .first()
             )
+        action_connector_name = None
+        if engine.action_connector_id:
+            linked = session.query(ActionConnector).filter_by(id=engine.action_connector_id).first()
+            action_connector_name = linked.display_name if linked else None
         out.append({
             "module_id": engine.module_id,
             "module_class": "custom",
@@ -1114,6 +1120,10 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             "description": engine.description or "",
             "custom": True,
             "engine_id": engine.id,
+            "trigger_type": engine.trigger_type or "manual",
+            "schedule_interval_minutes": engine.schedule_interval_minutes,
+            "action_connector_id": engine.action_connector_id,
+            "action_connector_name": action_connector_name,
             "last_status": last_event.status if last_event else None,
             "last_run": last_event.created_at.isoformat() if last_event else None,
             "last_message": last_event.message if last_event else None,
@@ -1175,6 +1185,60 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
             "last_message": last_event.message if last_event else None,
         })
 
+    # Outbound action connectors - never independently RUN-able (they
+    # only fire as a side effect of an agent run, see custom_engine.py's
+    # _send_to_action_connector), so no reads/writes tags and no RUN
+    # button on the frontend for these - Edit/Delete only. Folded in
+    # here (rather than a separate list endpoint) so Team & Keys' credential
+    # panel picks them up for free via the same needs_credential logic
+    # already computed for RestConnector above.
+    action_connectors_cfg = []
+    if project:
+        action_connectors_cfg = (
+            session.query(ActionConnector)
+            .join(ActionConnectorProject, ActionConnectorProject.connector_id == ActionConnector.id)
+            .filter(ActionConnectorProject.client_id == project.id)
+            .all()
+        )
+    for ac in action_connectors_cfg:
+        last_event = None
+        if project:
+            last_event = (
+                session.query(Event)
+                .filter_by(module_id=ac.module_id, client_id=project.id)
+                .order_by(Event.created_at.desc())
+                .first()
+            )
+        needs_credential = False
+        oauth_provider_slug, oauth_provider_name = None, None
+        if ac.auth_style == "header" and project:
+            has_cred = session.query(ActionConnectorCredential).filter_by(connector_id=ac.id, client_id=project.id).first()
+            needs_credential = not has_cred
+        elif ac.auth_style == "oauth_provider" and project:
+            provider = session.query(OAuthProvider).filter_by(id=ac.oauth_provider_id).first()
+            oauth_provider_slug = provider.slug if provider else None
+            oauth_provider_name = provider.name if provider else None
+            has_conn = session.query(OAuthConnection).filter_by(provider_id=ac.oauth_provider_id, client_id=project.id).first()
+            needs_credential = not has_conn
+        out.append({
+            "module_id": ac.module_id,
+            "module_class": "action-connector",
+            "display_name": ac.display_name,
+            "reads": [],
+            "writes": [],
+            "description": ac.description or "",
+            "oauth_provider_id": ac.oauth_provider_id if ac.auth_style == "oauth_provider" else None,
+            "oauth_provider_slug": oauth_provider_slug,
+            "oauth_provider_name": oauth_provider_name,
+            "custom": True,
+            "connector_id": ac.id,
+            "auth_style": ac.auth_style,
+            "needs_credential": needs_credential,
+            "last_status": last_event.status if last_event else None,
+            "last_run": last_event.created_at.isoformat() if last_event else None,
+            "last_message": last_event.message if last_event else None,
+        })
+
     session.close()
     return out
 
@@ -1182,9 +1246,31 @@ def api_modules(request: Request, user: User = Depends(get_current_user)):
 class EnginePayload(BaseModel):
     display_name: str
     description: str = ""
-    reads: str
+    reads: str = ""   # comma-separated type names - optional, blank means no records step
     prompt_template: str
     project_ids: list[int] = []   # which projects this applies to - empty is valid (nothing to link to yet)
+    trigger_type: str = "manual"                    # "manual" | "schedule"
+    schedule_interval_minutes: Optional[int] = None  # required, >= 5, when trigger_type == "schedule"
+    action_connector_id: Optional[int] = None        # if set, this agent's output is also POSTed via this connector
+
+
+def _validate_engine_payload(payload):
+    """Shared by create_engine and update_engine - raises HTTPException
+    on anything invalid, otherwise returns the cleaned reads list."""
+    name = payload.display_name.strip()
+    if not name:
+        raise HTTPException(400, "display_name is required")
+    if not payload.prompt_template.strip():
+        raise HTTPException(400, "prompt_template is required")
+    valid_types = {"Meeting", "Document", "Decision", "ActionItem", "OpenQuestion", "Brief"}
+    reads = [t.strip() for t in payload.reads.split(",") if t.strip()]
+    if reads and not all(t in valid_types for t in reads):
+        raise HTTPException(400, f"reads must be a comma-separated list from: {', '.join(sorted(valid_types))}")
+    if payload.trigger_type not in ("manual", "schedule"):
+        raise HTTPException(400, "trigger_type must be 'manual' or 'schedule'")
+    if payload.trigger_type == "schedule" and (not payload.schedule_interval_minutes or payload.schedule_interval_minutes < 5):
+        raise HTTPException(400, "schedule_interval_minutes must be at least 5 when trigger_type is 'schedule'")
+    return reads
 
 
 @app.get("/api/engines")
@@ -1198,6 +1284,10 @@ def list_engines(user: User = Depends(get_current_user)):
             "id": e.id, "module_id": e.module_id, "display_name": e.display_name,
             "description": e.description, "reads": e.reads, "prompt_template": e.prompt_template,
             "project_ids": [l.client_id for l in links],
+            "trigger_type": e.trigger_type or "manual",
+            "schedule_interval_minutes": e.schedule_interval_minutes,
+            "next_run_at": e.next_run_at.isoformat() if e.next_run_at else None,
+            "action_connector_id": e.action_connector_id,
         })
     session.close()
     return out
@@ -1205,15 +1295,7 @@ def list_engines(user: User = Depends(get_current_user)):
 
 @app.post("/api/engines")
 def create_engine(payload: EnginePayload, request: Request, user: User = Depends(require_role("admin", "member"))):
-    name = payload.display_name.strip()
-    if not name:
-        raise HTTPException(400, "display_name is required")
-    if not payload.prompt_template.strip():
-        raise HTTPException(400, "prompt_template is required")
-    valid_types = {"Meeting", "Document", "Decision", "ActionItem", "OpenQuestion", "Brief"}
-    reads = [t.strip() for t in payload.reads.split(",") if t.strip()]
-    if not reads or not all(t in valid_types for t in reads):
-        raise HTTPException(400, f"reads must be a comma-separated list from: {', '.join(sorted(valid_types))}")
+    reads = _validate_engine_payload(payload)
 
     session = SessionLocal()
     current_project = get_current_project(request, session)
@@ -1221,29 +1303,96 @@ def create_engine(payload: EnginePayload, request: Request, user: User = Depends
     if set(payload.project_ids) - valid_project_ids:
         session.close()
         raise HTTPException(400, "One or more selected projects don't exist")
+    if payload.action_connector_id and not session.query(ActionConnector).filter_by(id=payload.action_connector_id).first():
+        session.close()
+        raise HTTPException(400, "action_connector_id does not exist")
 
     import re
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "agent"
+    slug = re.sub(r"[^a-z0-9]+", "-", payload.display_name.strip().lower()).strip("-") or "agent"
     module_id = f"custom-{slug}"
     suffix = 1
     while session.query(PromptEngine).filter_by(module_id=module_id).first():
         suffix += 1
         module_id = f"custom-{slug}-{suffix}"
 
+    next_run_at = (
+        datetime.datetime.utcnow() + datetime.timedelta(minutes=payload.schedule_interval_minutes)
+        if payload.trigger_type == "schedule" else None
+    )
     engine = PromptEngine(
         client_id=current_project.id if current_project else None,
         module_id=module_id,
-        display_name=name,
+        display_name=payload.display_name.strip(),
         description=payload.description.strip(),
         reads=", ".join(reads),
         prompt_template=payload.prompt_template.strip(),
         created_by_id=user.id,
+        trigger_type=payload.trigger_type,
+        schedule_interval_minutes=payload.schedule_interval_minutes if payload.trigger_type == "schedule" else None,
+        next_run_at=next_run_at,
+        action_connector_id=payload.action_connector_id,
     )
     session.add(engine)
     session.commit()
     session.refresh(engine)
     for pid in valid_project_ids:
         session.add(PromptEngineProject(engine_id=engine.id, client_id=pid))
+    session.commit()
+    out = {"id": engine.id, "module_id": engine.module_id}
+    session.close()
+    return out
+
+
+@app.patch("/api/engines/{engine_id}")
+def update_engine(engine_id: int, payload: EnginePayload, user: User = Depends(require_role("admin", "member"))):
+    """Same validation as create_engine, applied in place - module_id and
+    id are left alone so Event log history and EngineOutput rows both
+    carry over untouched. Mirrors update_rest_connector's reasoning."""
+    reads = _validate_engine_payload(payload)
+
+    session = SessionLocal()
+    engine = session.query(PromptEngine).filter_by(id=engine_id).first()
+    if not engine:
+        session.close()
+        raise HTTPException(404, "agent not found")
+    if payload.action_connector_id and not session.query(ActionConnector).filter_by(id=payload.action_connector_id).first():
+        session.close()
+        raise HTTPException(400, "action_connector_id does not exist")
+
+    valid_project_ids = {c.id for c in session.query(Client.id).filter(Client.id.in_(payload.project_ids)).all()}
+    if set(payload.project_ids) - valid_project_ids:
+        session.close()
+        raise HTTPException(400, "One or more selected projects don't exist")
+
+    engine.display_name = payload.display_name.strip()
+    engine.description = payload.description.strip()
+    engine.reads = ", ".join(reads)
+    engine.prompt_template = payload.prompt_template.strip()
+    engine.action_connector_id = payload.action_connector_id
+
+    # next_run_at only gets (re)computed when the schedule is newly turned
+    # on or its interval changes - so an unrelated edit (fixing a typo in
+    # the prompt) doesn't push a due run further into the future.
+    became_schedule = payload.trigger_type == "schedule" and (
+        engine.trigger_type != "schedule" or engine.schedule_interval_minutes != payload.schedule_interval_minutes
+    )
+    if payload.trigger_type == "schedule":
+        engine.schedule_interval_minutes = payload.schedule_interval_minutes
+        if became_schedule:
+            engine.next_run_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=payload.schedule_interval_minutes)
+    else:
+        engine.schedule_interval_minutes = None
+        engine.next_run_at = None
+    engine.trigger_type = payload.trigger_type
+
+    existing_links = session.query(PromptEngineProject).filter_by(engine_id=engine_id).all()
+    existing_project_ids = {l.client_id for l in existing_links}
+    for link in existing_links:
+        if link.client_id not in valid_project_ids:
+            session.delete(link)
+    for pid in valid_project_ids - existing_project_ids:
+        session.add(PromptEngineProject(engine_id=engine_id, client_id=pid))
+
     session.commit()
     out = {"id": engine.id, "module_id": engine.module_id}
     session.close()
@@ -1602,6 +1751,251 @@ def set_rest_connector_resources(connector_id: int, payload: ResourceSelectionPa
     return {"ok": True}
 
 
+# ---------- Outbound action connectors (the sibling of RestConnector, above) ----------
+
+class ActionConnectorPayload(BaseModel):
+    display_name: str
+    description: str = ""
+    url_template: str
+    http_method: str = "POST"     # "POST" | "PUT"
+    auth_style: str = "header"    # "header" | "google_oauth" | "oauth_provider"
+    auth_header_name: str = "Authorization"
+    auth_value_prefix: str = ""
+    oauth_provider_id: Optional[int] = None
+    body_template: str
+    project_ids: list[int] = []
+
+
+class ActionConnectorTestSendPayload(BaseModel):
+    url_template: str
+    http_method: str = "POST"
+    auth_style: str = "header"
+    auth_header_name: str = "Authorization"
+    auth_value_prefix: str = ""
+    oauth_provider_id: Optional[int] = None
+    body_template: str
+    connector_id: Optional[int] = None   # falls back to this connector's saved credential when test_key isn't given
+    test_key: Optional[str] = None       # one-off value for this test only - never persisted
+
+
+def _validate_action_connector_payload(payload):
+    name = payload.display_name.strip()
+    if not name:
+        raise HTTPException(400, "display_name is required")
+    if payload.http_method not in ("POST", "PUT"):
+        raise HTTPException(400, "http_method must be 'POST' or 'PUT'")
+    if payload.auth_style not in ("header", "google_oauth", "oauth_provider"):
+        raise HTTPException(400, "auth_style must be 'header', 'google_oauth', or 'oauth_provider'")
+    if payload.auth_style == "oauth_provider" and not payload.oauth_provider_id:
+        raise HTTPException(400, "oauth_provider_id is required when auth_style is 'oauth_provider'")
+    if not payload.url_template.strip():
+        raise HTTPException(400, "url_template is required")
+    if not payload.body_template.strip():
+        raise HTTPException(400, "body_template is required")
+    if "{content}" not in payload.body_template:
+        raise HTTPException(400, "body_template must include {content} - otherwise the agent's output is never actually sent")
+    try:
+        action_connector.render_body(payload.body_template, {"content": "sample", "project_name": "sample", "date": "sample", "engine_name": "sample"})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/action-connectors/test-send")
+def test_action_connector_send(payload: ActionConnectorTestSendPayload, request: Request, user: User = Depends(require_role("admin", "member"))):
+    """Behind the "Test send" button - unlike detect-fields, this
+    performs a REAL POST/PUT to the live target with a clearly-labeled
+    sample payload; there's no side-effect-free way to verify an
+    outbound webhook. The frontend must confirm with the user before
+    calling this."""
+    session = SessionLocal()
+    project = get_current_project(request, session)
+    if not project:
+        session.close()
+        raise HTTPException(400, "No project selected")
+    try:
+        result = action_connector.test_send(
+            session, project, payload.auth_style, payload.auth_header_name, payload.auth_value_prefix,
+            payload.oauth_provider_id, payload.url_template, payload.http_method, payload.body_template,
+            payload.connector_id, payload.test_key,
+        )
+    except ValueError as e:
+        session.close()
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        session.close()
+        raise HTTPException(400, f"Test send failed: {e}")
+    session.close()
+    return result
+
+
+@app.get("/api/action-connectors")
+def list_action_connectors(user: User = Depends(get_current_user)):
+    session = SessionLocal()
+    rows = session.query(ActionConnector).order_by(ActionConnector.created_at.desc()).all()
+    out = []
+    for c in rows:
+        links = session.query(ActionConnectorProject).filter_by(connector_id=c.id).all()
+        out.append({
+            "id": c.id, "module_id": c.module_id, "display_name": c.display_name, "description": c.description,
+            "url_template": c.url_template, "http_method": c.http_method or "POST", "auth_style": c.auth_style,
+            "auth_header_name": c.auth_header_name, "auth_value_prefix": c.auth_value_prefix,
+            "oauth_provider_id": c.oauth_provider_id, "body_template": c.body_template,
+            "project_ids": [l.client_id for l in links],
+        })
+    session.close()
+    return out
+
+
+@app.post("/api/action-connectors")
+def create_action_connector(payload: ActionConnectorPayload, request: Request, user: User = Depends(require_role("admin", "member"))):
+    _validate_action_connector_payload(payload)
+
+    session = SessionLocal()
+    current_project = get_current_project(request, session)
+    valid_project_ids = {c.id for c in session.query(Client.id).filter(Client.id.in_(payload.project_ids)).all()}
+    if set(payload.project_ids) - valid_project_ids:
+        session.close()
+        raise HTTPException(400, "One or more selected projects don't exist")
+
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "-", payload.display_name.strip().lower()).strip("-") or "action"
+    module_id = f"action-{slug}"
+    suffix = 1
+    while session.query(ActionConnector).filter_by(module_id=module_id).first():
+        suffix += 1
+        module_id = f"action-{slug}-{suffix}"
+
+    ac = ActionConnector(
+        client_id=current_project.id if current_project else None,
+        module_id=module_id,
+        display_name=payload.display_name.strip(),
+        description=payload.description.strip(),
+        url_template=payload.url_template.strip(),
+        http_method=payload.http_method,
+        auth_style=payload.auth_style,
+        auth_header_name=payload.auth_header_name.strip() or "Authorization",
+        auth_value_prefix=payload.auth_value_prefix,
+        oauth_provider_id=payload.oauth_provider_id if payload.auth_style == "oauth_provider" else None,
+        body_template=payload.body_template.strip(),
+        created_by_id=user.id,
+    )
+    session.add(ac)
+    session.commit()
+    session.refresh(ac)
+    for pid in valid_project_ids:
+        session.add(ActionConnectorProject(connector_id=ac.id, client_id=pid))
+    session.commit()
+    out = {"id": ac.id, "module_id": ac.module_id}
+    session.close()
+    return out
+
+
+@app.patch("/api/action-connectors/{connector_id}")
+def update_action_connector(connector_id: int, payload: ActionConnectorPayload, user: User = Depends(require_role("admin", "member"))):
+    """Same validation as create_action_connector, applied in place -
+    module_id and id are left alone so Event log history and any saved
+    credential (keyed by connector_id) both carry over untouched.
+    Mirrors update_rest_connector's reasoning."""
+    _validate_action_connector_payload(payload)
+
+    session = SessionLocal()
+    ac = session.query(ActionConnector).filter_by(id=connector_id).first()
+    if not ac:
+        session.close()
+        raise HTTPException(404, "connector not found")
+
+    valid_project_ids = {c.id for c in session.query(Client.id).filter(Client.id.in_(payload.project_ids)).all()}
+    if set(payload.project_ids) - valid_project_ids:
+        session.close()
+        raise HTTPException(400, "One or more selected projects don't exist")
+
+    ac.display_name = payload.display_name.strip()
+    ac.description = payload.description.strip()
+    ac.url_template = payload.url_template.strip()
+    ac.http_method = payload.http_method
+    ac.auth_style = payload.auth_style
+    ac.auth_header_name = payload.auth_header_name.strip() or "Authorization"
+    ac.auth_value_prefix = payload.auth_value_prefix
+    ac.oauth_provider_id = payload.oauth_provider_id if payload.auth_style == "oauth_provider" else None
+    ac.body_template = payload.body_template.strip()
+
+    existing_links = session.query(ActionConnectorProject).filter_by(connector_id=connector_id).all()
+    existing_project_ids = {l.client_id for l in existing_links}
+    for link in existing_links:
+        if link.client_id not in valid_project_ids:
+            session.delete(link)
+    for pid in valid_project_ids - existing_project_ids:
+        session.add(ActionConnectorProject(connector_id=connector_id, client_id=pid))
+
+    session.commit()
+    out = {"id": ac.id, "module_id": ac.module_id}
+    session.close()
+    return out
+
+
+@app.post("/api/action-connectors/{connector_id}/projects/{project_id}")
+def link_action_connector_to_project(connector_id: int, project_id: int, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    if not session.query(ActionConnector).filter_by(id=connector_id).first() or not session.query(Client).filter_by(id=project_id).first():
+        session.close()
+        raise HTTPException(404, "connector or project not found")
+    if not session.query(ActionConnectorProject).filter_by(connector_id=connector_id, client_id=project_id).first():
+        session.add(ActionConnectorProject(connector_id=connector_id, client_id=project_id))
+        session.commit()
+    session.close()
+    return {"ok": True}
+
+
+@app.delete("/api/action-connectors/{connector_id}")
+def delete_action_connector(connector_id: int, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    ac = session.query(ActionConnector).filter_by(id=connector_id).first()
+    if not ac:
+        session.close()
+        raise HTTPException(404, "connector not found")
+    session.query(ActionConnectorCredential).filter_by(connector_id=connector_id).delete()
+    session.query(ActionConnectorProject).filter_by(connector_id=connector_id).delete()
+    session.delete(ac)
+    session.commit()
+    session.close()
+    return {"ok": True}
+
+
+@app.post("/api/action-connectors/{connector_id}/credential")
+def set_action_connector_credential(connector_id: int, payload: CredentialPayload, request: Request, user: User = Depends(require_role("admin", "member"))):
+    value = payload.value.strip()
+    if not value:
+        raise HTTPException(400, "value is required")
+    session = SessionLocal()
+    project = get_current_project(request, session)
+    if not project:
+        session.close()
+        raise HTTPException(400, "No project selected")
+    require_project_admin(user, project.id, session)
+    existing = session.query(ActionConnectorCredential).filter_by(connector_id=connector_id, client_id=project.id).first()
+    if existing:
+        existing.encrypted_value = encrypt(value)
+    else:
+        session.add(ActionConnectorCredential(connector_id=connector_id, client_id=project.id, encrypted_value=encrypt(value)))
+    session.commit()
+    session.close()
+    return {"ok": True}
+
+
+@app.delete("/api/action-connectors/{connector_id}/credential")
+def clear_action_connector_credential(connector_id: int, request: Request, user: User = Depends(require_role("admin", "member"))):
+    session = SessionLocal()
+    project = get_current_project(request, session)
+    if not project:
+        session.close()
+        raise HTTPException(400, "No project selected")
+    require_project_admin(user, project.id, session)
+    session.query(ActionConnectorCredential).filter_by(connector_id=connector_id, client_id=project.id).delete()
+    session.commit()
+    session.close()
+    return {"ok": True}
+
+
 # ---------- Tier B: generic OAuth2 providers ----------
 
 class OAuthProviderPayload(BaseModel):
@@ -1924,6 +2318,74 @@ async def _auto_sync_loop():
                     await loop.run_in_executor(None, run_auto_sync_for_project, session, client)
                 except Exception as e:
                     print(f"[auto-sync] project {client.id} failed: {e}", flush=True)
+        finally:
+            session.close()
+
+
+# How often the loop below checks for due scheduled agents - a fixed 60s
+# poll rather than sleeping per-agent, since (unlike auto-sync's single
+# global interval) each agent's own schedule_interval_minutes differs;
+# the loop just needs to notice when ANY agent's next_run_at has passed,
+# whichever that ends up being.
+SCHEDULE_POLL_SECONDS = 60
+
+
+def run_scheduled_agent(session, engine):
+    """Runs one schedule-triggered agent for EVERY project it's linked
+    to via PromptEngineProject (the real many-to-many - see its
+    docstring). There's no "current project" in a background context
+    the way a manual RUN has one selected via the session, so unlike a
+    manual run this can't just pick one. Each linked project's run is
+    wrapped in its own try/except, mirroring run_auto_sync_for_project's
+    per-connector isolation, so one project's failure (bad key, a
+    prompt that errors against that project's data) doesn't stop the
+    agent's other projects."""
+    links = session.query(PromptEngineProject).filter_by(engine_id=engine.id).all()
+    for link in links:
+        client = session.query(Client).filter_by(id=link.client_id).first()
+        if not client:
+            continue
+        try:
+            # get_automation_llm_config, not get_user_llm_config - there's
+            # no clicking user in a scheduled/background context, same
+            # reasoning _auto_sync_loop already relies on.
+            llm_config = get_automation_llm_config(client, session)
+            custom_engine.run_custom_engine(session, client, engine, llm_config=llm_config)
+        except Exception as e:
+            print(f"[scheduled-agent] '{engine.display_name}' failed for project {client.id}: {e}", flush=True)
+
+
+async def _scheduled_agent_loop():
+    """Runs for the lifetime of the process - same single-asyncio-task,
+    single-process caveat as _auto_sync_loop (not horizontally
+    scalable: running two instances would double-fire due agents, not
+    distribute them). Each due agent's run is pushed to a thread since
+    custom_engine.run_custom_engine is synchronous/blocking."""
+    loop = asyncio.get_event_loop()
+    while True:
+        await asyncio.sleep(SCHEDULE_POLL_SECONDS)
+        session = SessionLocal()
+        try:
+            now = datetime.datetime.utcnow()
+            due = session.query(PromptEngine).filter(
+                PromptEngine.trigger_type == "schedule",
+                PromptEngine.next_run_at.isnot(None),
+                PromptEngine.next_run_at <= now,
+            ).all()
+            for engine in due:
+                try:
+                    await loop.run_in_executor(None, run_scheduled_agent, session, engine)
+                except Exception as e:
+                    print(f"[scheduled-agent] engine {engine.id} failed: {e}", flush=True)
+                finally:
+                    # Advanced from THIS tick's "now", not chained off the
+                    # old next_run_at - avoids a rapid catch-up burst if
+                    # the process was down past several intervals; a
+                    # missed tick is simply dropped, matching
+                    # _auto_sync_loop's own "just keep going forward"
+                    # behavior.
+                    engine.next_run_at = now + datetime.timedelta(minutes=engine.schedule_interval_minutes or 15)
+                    session.commit()
         finally:
             session.close()
 

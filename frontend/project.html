@@ -1097,13 +1097,18 @@ async function renderConnectorKeys() {
   ]);
   const modules = await modulesRes.json();
   const connections = connectionsRes.ok ? await connectionsRes.json() : [];
-  const connectorModules = modules.filter(m => m.module_class === 'custom-connector' && m.auth_style !== 'google_oauth');
+  // Both inbound RestConnectors ("custom-connector") and outbound
+  // ActionConnectors ("action-connector") share the same three auth
+  // styles, so the same panel/rows work for either - only the
+  // credential save/clear URL differs (see credentialUrlBase below).
+  const connectorModules = modules.filter(m => (m.module_class === 'custom-connector' || m.module_class === 'action-connector') && m.auth_style !== 'google_oauth');
   if (!connectorModules.length) {
     section.style.display = 'none';
     return;
   }
   section.style.display = 'block';
   list.innerHTML = connectorModules.map(m => {
+    const rowId = `${m.module_class}-${m.connector_id}`;
     if (m.auth_style === 'oauth_provider') {
       const connection = connections.find(c => c.provider_id === m.oauth_provider_id);
       return `
@@ -1122,20 +1127,24 @@ async function renderConnectorKeys() {
       <div class="tp-connector-row">
         <div class="tp-connector-label">${m.display_name}</div>
         <div class="tp-status ${m.needs_credential ? 'unset' : 'set'}">${m.needs_credential ? 'Not set' : 'Set'}</div>
-        <input type="password" id="connCred-${m.connector_id}" placeholder="Paste API key" />
+        <input type="password" id="connCred-${rowId}" placeholder="Paste API key" />
         <div class="btn-row">
-          <button class="primary" onclick="saveConnectorCredential(${m.connector_id})">Save</button>
-          <button class="danger" onclick="clearConnectorCredential(${m.connector_id})">Clear</button>
+          <button class="primary" onclick="saveConnectorCredential('${m.module_class}', ${m.connector_id})">Save</button>
+          <button class="danger" onclick="clearConnectorCredential('${m.module_class}', ${m.connector_id})">Clear</button>
         </div>
       </div>`;
   }).join('');
 }
 
-async function saveConnectorCredential(connectorId) {
-  const input = document.getElementById('connCred-' + connectorId);
+function connectorCredentialUrlBase(moduleClass, connectorId) {
+  return moduleClass === 'action-connector' ? `/api/action-connectors/${connectorId}` : `/api/rest-connectors/${connectorId}`;
+}
+
+async function saveConnectorCredential(moduleClass, connectorId) {
+  const input = document.getElementById(`connCred-${moduleClass}-${connectorId}`);
   const value = input.value.trim();
   if (!value) return;
-  const res = await apiFetch(`/api/rest-connectors/${connectorId}/credential`, {
+  const res = await apiFetch(`${connectorCredentialUrlBase(moduleClass, connectorId)}/credential`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ value }),
@@ -1197,8 +1206,8 @@ async function saveResourceSelection() {
   closeResourcePicker();
 }
 
-async function clearConnectorCredential(connectorId) {
-  await apiFetch(`/api/rest-connectors/${connectorId}/credential`, { method: 'DELETE' });
+async function clearConnectorCredential(moduleClass, connectorId) {
+  await apiFetch(`${connectorCredentialUrlBase(moduleClass, connectorId)}/credential`, { method: 'DELETE' });
   await renderConnectorKeys();
 }
 
