@@ -83,7 +83,11 @@ CANONICAL_FIELDS = [
     {"key": "narration", "label": "Narration", "group": "computed"},
 ]
 
-REQUIRED_FOR_OK = ("order_id", "internal_product_code", "voucher_type", "sales_ledger", "godown")
+# voucher_type/sales_ledger deliberately excluded - not part of the
+# PRD's 23-column Sales Register, and PIL confirmed their real data
+# has neither. A row is never flagged for lacking them; they only
+# matter for the optional native Tally XML export.
+REQUIRED_FOR_OK = ("order_id", "internal_product_code", "godown")
 
 LEDGER_CONFIG_KEYS = [
     ("company_state", "Company's home state (for CGST+SGST vs IGST)"),

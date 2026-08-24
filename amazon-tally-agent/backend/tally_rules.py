@@ -14,7 +14,16 @@ separate, on-demand, opt-in helpers.
 import os
 import json
 
-MANDATORY_GROUPS = ("voucher_type", "ledger_mapping")
+# Empty on purpose: the PRD's actual 23-column Sales Register has no
+# Voucher Type or Sales Ledger column at all, and PIL confirmed their
+# real data carries neither concept - so neither can be mandatory
+# without inventing a requirement the client's own output doesn't
+# have. voucher_type/sales_ledger remain valid, optional canonical
+# fields (useful only for the bonus native Tally XML export, which
+# needs SOME ledger name to produce a valid voucher) - configure a
+# voucher_type/ledger_mapping rule if you want that export to work,
+# but a row is never blocked or escalated for lacking one.
+MANDATORY_GROUPS = ()
 
 # tax_split is conditionally mandatory, not blanket-mandatory like the
 # groups above: a row that already reports its own
