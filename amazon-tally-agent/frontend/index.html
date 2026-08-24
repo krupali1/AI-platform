@@ -260,13 +260,27 @@
           </div>
         </div>
 
+        <div class="card-grid" style="margin-top:16px;">
+          <div class="upload-card">
+            <h3>B2B Sales Report <span class="required-badge">Required*</span></h3>
+            <p class="hint">Your Amazon MTR B2B file. Dropped here, it's always tagged Report Type = B2B — whatever the file is named.</p>
+            <div class="dropzone" id="dz-sales-b2b">Drag a file here or <span class="browse">browse</span></div>
+            <div id="files-sales-B2B"></div>
+          </div>
+          <div class="upload-card">
+            <h3>B2C Sales Report <span class="required-badge">Required*</span></h3>
+            <p class="hint">Your Amazon MTR B2C file. Dropped here, it's always tagged Report Type = B2C — whatever the file is named.</p>
+            <div class="dropzone" id="dz-sales-b2c">Drag a file here or <span class="browse">browse</span></div>
+            <div id="files-sales-B2C"></div>
+          </div>
+        </div>
+
         <div class="upload-card" style="margin-top:16px;">
-          <h3>Sales Reports <span class="required-badge">Required*</span></h3>
-          <p class="hint">e.g. MTR B2C, MTR B2B - tag each one with its report type.</p>
+          <h3>Other Sales Reports <span class="optional-badge">optional</span></h3>
+          <p class="hint">Only if you have a report type beyond B2B/B2C for this platform - type its label first.</p>
           <div id="salesFilesList"></div>
           <div class="add-report-row">
-            <input type="text" id="reportOrderType" list="orderTypeSuggestions" placeholder="Report type - e.g. B2C, B2B" />
-            <datalist id="orderTypeSuggestions"><option value="B2C"><option value="B2B"><option value="General"></datalist>
+            <input type="text" id="reportOrderType" placeholder="Report type - e.g. MFN" />
             <button class="btn btn-outline btn-sm" id="reportBrowseBtn">+ Add report</button>
             <input type="file" id="reportFileInput" style="display:none" />
           </div>
@@ -690,10 +704,25 @@ async function removeFile(fileId) {
   dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
   dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0], role); });
 });
+// Dedicated B2B/B2C dropzones - the order type is fixed by which
+// dropzone the file lands in, not typed, so it can never be mistagged
+// or left blank the way a free-text field can.
+[['dz-sales-b2b', 'B2B'], ['dz-sales-b2c', 'B2C']].forEach(([dzId, orderType]) => {
+  const dz = document.getElementById(dzId);
+  const input = document.createElement('input');
+  input.type = 'file'; input.style.display = 'none';
+  input.addEventListener('change', () => { if (input.files[0]) uploadFile(input.files[0], 'sales', { order_type: orderType }); input.value = ''; });
+  dz.appendChild(input);
+  dz.addEventListener('click', () => input.click());
+  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+  dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0], 'sales', { order_type: orderType }); });
+});
 document.getElementById('reportBrowseBtn').addEventListener('click', () => document.getElementById('reportFileInput').click());
 document.getElementById('reportFileInput').addEventListener('change', async (e) => {
   if (e.target.files[0]) {
-    const orderType = document.getElementById('reportOrderType').value.trim() || 'General';
+    const orderType = document.getElementById('reportOrderType').value.trim();
+    if (!orderType) { showToast('Type a report type first (e.g. MFN)'); e.target.value = ''; return; }
     await uploadFile(e.target.files[0], 'sales', { order_type: orderType });
     document.getElementById('reportOrderType').value = '';
   }
@@ -745,9 +774,19 @@ function renderFiles() {
       container.appendChild(chip);
     });
   });
+  ['B2B', 'B2C'].forEach(orderType => {
+    const container = document.getElementById('files-sales-' + orderType);
+    container.innerHTML = '';
+    STATE.files.filter(f => f.file_role === 'sales' && f.order_type === orderType).forEach(f => {
+      const chip = document.createElement('div'); chip.className = 'file-chip';
+      chip.innerHTML = `<div><div>${f.original_filename}</div><div class="meta">${fmtSize(f.size_bytes)}</div>${f.sheet_names.length ? `<div class="sheets">Sheets: ${f.sheet_names.join(', ')}</div>` : ''}</div><button data-id="${f.id}">✕</button>`;
+      chip.querySelector('button').addEventListener('click', () => removeFile(f.id));
+      container.appendChild(chip);
+    });
+  });
   const salesList = document.getElementById('salesFilesList');
   salesList.innerHTML = '';
-  STATE.files.filter(f => f.file_role === 'sales').forEach(f => {
+  STATE.files.filter(f => f.file_role === 'sales' && f.order_type !== 'B2B' && f.order_type !== 'B2C').forEach(f => {
     const chip = document.createElement('div'); chip.className = 'file-chip';
     chip.innerHTML = `<div><span class="order-type-badge">${f.order_type || 'General'}</span>${f.original_filename} <span class="meta">${fmtSize(f.size_bytes)}</span>${f.sheet_names.length ? `<div class="sheets">Sheets: ${f.sheet_names.join(', ')}</div>` : ''}</div><button data-id="${f.id}">✕</button>`;
     chip.querySelector('button').addEventListener('click', () => removeFile(f.id));
