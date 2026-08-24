@@ -98,6 +98,38 @@ def _extract_order_type_branches(text):
     return {ot.upper(): val.strip() for ot, val in matches}
 
 
+# A formula like "= Tax exclusive gross x Cgst Rate" names its own
+# ingredient columns inline. Some ingredients are themselves already
+# computed by the pipeline (gross/taxable value) - nothing to map
+# there - but others (the rate columns, Quantity) are genuine literal
+# columns from the sales report that this parser would otherwise have
+# no way to discover, since they never appear as a "Tally sheet" row
+# of their own in a PRD-style spec (only the computed totals do).
+_FORMULA_OPERAND_ALIASES = {
+    "cgstrate": "cgst_rate", "sgstrate": "sgst_rate",
+    "igstrate": "igst_rate", "utgstrate": "utgst_rate",
+    "quantity": "quantity", "qty": "quantity",
+}
+
+
+def _extract_formula_operands(text):
+    """'= Tax exclusive gross x Cgst Rate' -> ["Tax exclusive gross",
+    "Cgst Rate"]. '= Tax exclusive gross / Quantity' -> same shape,
+    division. 'Sum of: Cgst Rate + Sgst Rate + Utgst Rate + Igst Rate'
+    -> all four terms. Empty list if the text isn't one of these
+    formula shapes."""
+    m = re.search(r'sum\s+of\s*:\s*(.+)$', text, re.I)
+    if m:
+        return [t.strip() for t in re.split(r'\+', m.group(1)) if t.strip()]
+    m = re.search(r'=\s*(.+?)\s+x\s+(.+)$', text, re.I)
+    if m:
+        return [m.group(1).strip(), m.group(2).strip()]
+    m = re.search(r'=\s*(.+?)\s*/\s*(.+)$', text, re.I)
+    if m:
+        return [m.group(1).strip(), m.group(2).strip()]
+    return []
+
+
 def _looks_like_master_lookup(text):
     return bool(re.search(r'tally\s*product', text, re.I)) or bool(re.search(r"map(ped)?\s+from", text, re.I))
 
@@ -154,7 +186,20 @@ def parse_column_mapping_sheet(parsed, sheet_name=None):
         mappings.append({"target_field": key, "source_file_role": "sample_tally", "order_type": "", "source_column_name": tally_label, "constant_value": ""})
 
         if key in COMPUTED_FIELD_KEYS:
-            continue  # computed by the pipeline - no input column to map from
+            # No input mapping for the computed field itself, but its
+            # formula may name real ingredient columns (rate columns,
+            # Quantity) worth mapping in their own right - e.g. CGST's
+            # "= Tax exclusive gross x Cgst Rate" reveals that "Cgst
+            # Rate" is a literal sales-report column the pipeline needs
+            # to actually compute CGST, even though CGST itself is
+            # output-only.
+            role = _source_role_from_label(source_sheet_label)
+            if role:
+                for operand in _extract_formula_operands(source_text):
+                    operand_key = _FORMULA_OPERAND_ALIASES.get(_norm(operand))
+                    if operand_key:
+                        mappings.append({"target_field": operand_key, "source_file_role": role, "order_type": "", "source_column_name": operand, "constant_value": ""})
+            continue
 
         if _looks_like_master_lookup(source_text):
             flagged.append({"label": f'"{tally_label}"', "reason": "Comes from your Master File (SKU → product code) lookup, not a direct column - already handled by that upload."})
