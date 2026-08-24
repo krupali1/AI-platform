@@ -127,6 +127,15 @@
   .issue-title.resolved { color: var(--text-muted); text-decoration: line-through; }
   .issue-meta { color: var(--text-muted); font-size: 11.5px; margin-top: 2px; }
 
+  .issue-group-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border); cursor: pointer; background: var(--panel-raised); }
+  .issue-group-header:first-child { border-top: none; }
+  .issue-group-header:hover { background: var(--accent-bg); }
+  .issue-group-title { flex: 1; font-size: 13px; font-weight: 600; }
+  .issue-group-toggle { color: var(--text-muted); font-size: 11px; width: 12px; text-align: center; }
+  .issue-group-body { background: var(--panel); }
+  .issue-group-body .issue-row:first-child { border-top: 1px solid var(--border); }
+  .issue-group-more { padding: 10px 16px; color: var(--text-muted); font-size: 12px; border-top: 1px solid var(--border); }
+
   .slice-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
   .slice-field label { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 5px; }
   .slice-field select { padding: 8px 10px; border: 1px solid var(--border); background: var(--panel-raised); min-width: 140px; }
@@ -786,15 +795,64 @@ document.getElementById('toBuildBtn').addEventListener('click', () => {
   document.getElementById('buildPanel').scrollIntoView({ behavior: 'smooth' });
 });
 
+// Groups exceptions by their exact title - the same "no active rule
+// matched" message repeats verbatim for every row failing that same
+// rule, so at real-data scale (thousands of rows) a flat list is
+// unreadable. Grouped and sorted biggest-first so the root cause
+// worth fixing is the one at the top, not buried under one-off rows.
+const ISSUE_GROUP_RENDER_CAP = 200;
+
 function renderIssueList(containerId, items, scope) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
   if (!items.length) { container.innerHTML = '<div class="empty-state">No exceptions.</div>'; return; }
+
+  const groups = {};
+  const order = [];
   items.forEach(item => {
+    const key = item.title;
+    if (!groups[key]) { groups[key] = { title: key, severity: item.severity, items: [] }; order.push(key); }
+    groups[key].items.push(item);
+  });
+  const groupList = order.map(k => groups[k]).sort((a, b) => b.items.length - a.items.length);
+
+  groupList.forEach(group => {
+    const resolvedCount = group.items.filter(i => i.status !== 'pending').length;
+    const allResolved = resolvedCount === group.items.length;
+
+    const header = document.createElement('div');
+    header.className = 'issue-group-header';
+    header.innerHTML = `<div class="issue-icon ${allResolved ? 'done' : group.severity}">${allResolved ? '✓' : (group.severity === 'error' ? '!' : '·')}</div>
+      <div class="issue-group-title">${group.title}</div>
+      <span class="chip ${allResolved ? 'chip-green' : 'chip-amber'}">${resolvedCount} of ${group.items.length}</span>
+      <span class="issue-group-toggle">▸</span>`;
+
+    const body = document.createElement('div');
+    body.className = 'issue-group-body';
+    body.style.display = 'none';
+
+    header.addEventListener('click', () => {
+      const isOpen = body.style.display !== 'none';
+      body.style.display = isOpen ? 'none' : 'block';
+      header.querySelector('.issue-group-toggle').textContent = isOpen ? '▸' : '▾';
+      if (!isOpen && !body.dataset.rendered) {
+        renderIssueGroupRows(body, group.items, scope);
+        body.dataset.rendered = '1';
+      }
+    });
+
+    container.appendChild(header);
+    container.appendChild(body);
+  });
+}
+
+function renderIssueGroupRows(container, items, scope) {
+  const shown = items.slice(0, ISSUE_GROUP_RENDER_CAP);
+  shown.forEach(item => {
     const row = document.createElement('div'); row.className = 'issue-row';
     const resolved = item.status !== 'pending';
     const icon = resolved ? `<div class="issue-icon done">✓</div>` : `<div class="issue-icon ${item.severity}">${item.severity === 'error' ? '!' : '·'}</div>`;
-    row.innerHTML = `${icon}<div class="issue-body"><div class="issue-title ${resolved ? 'resolved' : ''}">${item.title}</div><div class="issue-meta">${item.source_label || ''}${item.source_label && item.location_label ? ' · ' : ''}${item.location_label || ''}</div></div>`;
+    row.innerHTML = `${icon}<div class="issue-body"><div class="issue-title ${resolved ? 'resolved' : ''}">${item.location_label || item.source_label || 'Row'}</div><div class="issue-meta">${item.source_label || ''}</div></div>`;
     if (resolved) {
       row.innerHTML += `<span class="chip chip-green">${item.resolution_mode === 'reupload' ? 'Sheet re-uploaded' : item.resolution_mode === 'suggest' ? 'Suggestion approved' : 'Fixed'}</span>`;
     } else {
@@ -804,6 +862,12 @@ function renderIssueList(containerId, items, scope) {
     }
     container.appendChild(row);
   });
+  if (items.length > ISSUE_GROUP_RENDER_CAP) {
+    const more = document.createElement('div');
+    more.className = 'issue-group-more';
+    more.textContent = `${items.length - ISSUE_GROUP_RENDER_CAP} more row(s) with this same exception, not shown here. Fixing the root cause (a missing rule or mapping) clears all of them at once - see the Rules & Exceptions / Column Mapping Sheet cards in Step 1.`;
+    container.appendChild(more);
+  }
 }
 
 // ---------- build panel ----------
