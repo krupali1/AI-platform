@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sign in · Amazon → Tally Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;600;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #EFF0EC; --panel: #ffffff; --border: #DEDDD5;
+    --text: #10161A; --text-muted: #5A6B72;
+    --accent: #1C7350; --accent2: #C0552F; --bad: #c0392b; --bad-bg: #fbeae8;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", "Public Sans", system-ui, sans-serif;
+    --body: "Public Sans", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: var(--body); display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    width: 360px; background: var(--panel); border: 1px solid var(--border);
+    padding: 40px 32px;
+  }
+  .brand { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+  h1 { font-family: var(--sans); font-weight: 700; font-size: 22px; margin: 0 0 24px; }
+  label { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; margin-top: 16px; }
+  input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 0;
+    font-family: var(--body); font-size: 14px; background: var(--bg); color: var(--text);
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  button {
+    width: 100%; margin-top: 24px; padding: 12px 16px; border: 1px solid var(--accent);
+    background: var(--accent); color: #EFF0EC; font-family: var(--mono); font-size: 12px;
+    letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; border-radius: 0;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .error { margin-top: 14px; padding: 10px 12px; background: var(--bad-bg); color: var(--bad); font-size: 13px; display: none; }
+</style>
+</head>
+<body>
+  <form class="card" id="loginForm">
+    <div class="brand">Amazon → Tally</div>
+    <h1>Sign in</h1>
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" required />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+    <div class="error" id="loginError"></div>
+    <button type="submit" id="loginBtn">Sign in</button>
+  </form>
+<script>
+const form = document.getElementById('loginForm');
+const errorBox = document.getElementById('loginError');
+const btn = document.getElementById('loginBtn');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      errorBox.textContent = body.detail || 'Sign in failed.';
+      errorBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+      return;
+    }
+    window.location.href = '/';
+  } catch (err) {
+    errorBox.textContent = 'Could not reach the server.';
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  }
+});
+</script>
+</body>
+</html>

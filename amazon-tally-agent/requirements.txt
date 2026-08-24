@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+python-multipart
+itsdangerous
+python-dotenv
+pandas
+openpyxl
+anthropic
+python-docx
+pypdf
+httpx
+psycopg2-binary

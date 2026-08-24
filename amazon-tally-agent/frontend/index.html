@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tally Automation Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@1,500&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;600;700&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #EFF0EC; --panel: #ffffff; --panel-raised: #F7F7F3; --border: #DEDDD5;
+    --text: #10161A; --text-muted: #5A6B72;
+    --accent: #1C7350; --accent-bg: #E4EEE9;
+    --accent2: #C0552F; --accent2-bg: #F6E7E0;
+    --good: #1C7350; --good-bg: #E4EEE9;
+    --bad: #B23B2E; --bad-bg: #FBEAE6;
+    --warn: #9C6B14; --warn-bg: #F5EBD6;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sans: "IBM Plex Sans", system-ui, sans-serif;
+    --body: "Public Sans", system-ui, sans-serif;
+    --serif-italic: "Fraunces", Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--body); font-size: 14px; }
+  em { font-family: var(--serif-italic); font-style: italic; color: var(--accent2); }
+  button { font-family: var(--mono); border-radius: 0; cursor: pointer; }
+  input, select, textarea { font-family: var(--body); border-radius: 0; }
+  a { color: var(--accent); }
+
+  .app-shell { display: flex; min-height: 100vh; }
+
+  /* ---------- sidebar ---------- */
+  .sidebar { width: 220px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; }
+  .sidebar-brand { padding: 0 18px 20px; }
+  .brand-label { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); }
+  .brand-title { display: block; font-family: var(--sans); font-weight: 700; font-size: 16px; margin-top: 2px; }
+  .sidebar-heading { padding: 0 18px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
+  .platform-list { display: flex; flex-direction: column; gap: 1px; margin-bottom: 12px; }
+  .platform-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 18px; font-size: 13px; color: var(--text-muted); background: none; border: none;
+    text-align: left; width: 100%; font-family: var(--body); cursor: pointer;
+  }
+  .platform-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 600; border-right: 2px solid var(--accent); }
+  .platform-item:hover:not(.active) { background: var(--panel-raised); }
+  .add-platform-row { padding: 6px 18px; }
+  .add-platform-row button { width: 100%; padding: 8px; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; border: 1px dashed var(--border); background: none; color: var(--text-muted); }
+  .add-platform-row button:hover { border-color: var(--text); color: var(--text); }
+  .sidebar-footer { margin-top: auto; padding: 12px 18px 0; border-top: 1px solid var(--border); padding-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .sidebar-footer a, .sidebar-footer button {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted);
+    text-decoration: none; background: none; border: 1px solid var(--border); padding: 7px 10px; text-align: center;
+  }
+  .sidebar-footer a:hover, .sidebar-footer button:hover { color: var(--text); border-color: var(--text); }
+
+  /* ---------- main ---------- */
+  main { flex: 1; min-width: 0; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 16px 32px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .topbar select { padding: 8px 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; }
+  .btn {
+    padding: 9px 14px; border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .btn:hover { opacity: 0.9; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-outline { background: transparent; color: var(--text); border-color: var(--border); }
+  .btn-outline:hover { border-color: var(--text); opacity: 1; }
+  .btn-terracotta { background: var(--accent2); border-color: var(--accent2); }
+  .btn-sm { padding: 6px 10px; font-size: 10px; }
+
+  .content { max-width: 1040px; margin: 0 auto; padding: 32px 32px 100px; }
+  .page-intro { font-family: var(--sans); font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+  .page-sub { color: var(--text-muted); margin: 0 0 24px; max-width: 640px; }
+
+  .step-stepper { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; flex-wrap: wrap; }
+  .step-pill { display: flex; align-items: center; gap: 8px; }
+  .step-num { width: 24px; height: 24px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11px; background: var(--panel-raised); color: var(--text-muted); border: 1px solid var(--border); }
+  .step-num.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .step-num.done { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+  .step-label { font-size: 13px; color: var(--text-muted); }
+  .step-label.on, .step-label.done { color: var(--text); font-weight: 500; }
+  .step-sep { width: 24px; height: 1px; background: var(--border); }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); padding: 22px; margin-bottom: 20px; }
+  .panel h2 { font-family: var(--sans); font-size: 15px; margin: 0 0 4px; }
+  .panel .hint { color: var(--text-muted); font-size: 12px; margin: 0 0 16px; }
+  .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; border-radius: 999px; }
+  .chip-green { background: var(--good-bg); color: var(--good); }
+  .chip-amber { background: var(--warn-bg); color: var(--warn); }
+
+  .card-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .upload-card { background: var(--panel-raised); border: 1px solid var(--border); padding: 16px; }
+  .upload-card h3 { font-family: var(--sans); font-size: 13.5px; margin: 0 0 2px; }
+  .upload-card .hint { color: var(--text-muted); font-size: 11.5px; margin: 0 0 10px; }
+  .required-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent2); border: 1px solid var(--accent2); padding: 1px 6px; margin-left: 6px; }
+  .optional-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); margin-left: 6px; }
+  .dropzone { border: 1px dashed var(--border); background: var(--panel); padding: 16px; text-align: center; font-size: 11.5px; color: var(--text-muted); cursor: pointer; }
+  .dropzone.drag { border-color: var(--accent); background: var(--accent-bg); }
+  .dropzone .browse { color: var(--accent); text-decoration: underline; }
+  .file-chip {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); margin-top: 8px; font-size: 12px;
+  }
+  .file-chip .meta { color: var(--text-muted); font-size: 11px; }
+  .file-chip .sheets { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+  .file-chip button { background: none; border: none; color: var(--bad); font-size: 14px; padding: 0 4px; }
+  .order-type-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; background: var(--accent-bg); color: var(--accent); padding: 2px 7px; margin-right: 8px; }
+
+  .add-report-row { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+  .add-report-row input[type=text] { flex: 1; max-width: 220px; padding: 8px 10px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+
+  .issue-list { border: 1px solid var(--border); }
+  .issue-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border); }
+  .issue-row:first-child { border-top: none; }
+  .issue-icon { width: 16px; height: 16px; flex-shrink: 0; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
+  .issue-icon.error { background: var(--bad-bg); color: var(--bad); }
+  .issue-icon.warning { background: var(--warn-bg); color: var(--warn); }
+  .issue-icon.done { background: var(--good-bg); color: var(--good); }
+  .issue-body { flex: 1; min-width: 0; }
+  .issue-title { font-size: 13px; }
+  .issue-title.resolved { color: var(--text-muted); text-decoration: line-through; }
+  .issue-meta { color: var(--text-muted); font-size: 11.5px; margin-top: 2px; }
+
+  .slice-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+  .slice-field label { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 5px; }
+  .slice-field select { padding: 8px 10px; border: 1px solid var(--border); background: var(--panel-raised); min-width: 140px; }
+
+  .agent-log { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .agent-log li { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-muted); }
+  .agent-log li.done { color: var(--text); }
+  .agent-log .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--border); flex-shrink: 0; }
+  .agent-log li.done .dot { background: var(--good); }
+
+  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+  .stat-tile { background: var(--panel-raised); border: 1px solid var(--border); padding: 14px; }
+  .stat-tile .n { font-family: var(--sans); font-weight: 700; font-size: 22px; }
+  .stat-tile .l { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); margin-top: 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); }
+  .status-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 7px; display: inline-block; }
+  .status-ok, .status-resolved { background: var(--good-bg); color: var(--good); }
+  .status-flagged { background: var(--warn-bg); color: var(--warn); }
+  .status-escalated { background: var(--bad-bg); color: var(--bad); }
+  .status-excluded { background: var(--panel-raised); color: var(--text-muted); }
+  tr.row-flagged td, tr.row-escalated td { background: var(--warn-bg); }
+  tr.row-resolved td { background: var(--accent-bg); }
+
+  .output-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .output-card { background: var(--panel-raised); border: 1px solid var(--border); padding: 18px; }
+  .output-card h3 { font-family: var(--sans); font-size: 14px; margin: 0 0 6px; }
+  .output-card p { color: var(--text-muted); font-size: 12px; margin: 0 0 14px; }
+  .warning-banner { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); padding: 10px 14px; font-size: 12.5px; margin-bottom: 16px; }
+
+  .continue-row { display: flex; justify-content: flex-end; margin-top: 20px; gap: 10px; }
+  .empty-state { color: var(--text-muted); font-size: 13px; padding: 20px; text-align: center; }
+  .field-row label { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 5px; }
+  .field-row input, .field-row textarea, .field-row select { width: 100%; padding: 9px 10px; border: 1px solid var(--border); background: var(--bg); font-size: 13px; }
+
+  /* ---------- modal ---------- */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(16,22,26,0.45); z-index: 50; align-items: flex-start; justify-content: center; padding: 50px 20px; overflow-y: auto; }
+  .modal-overlay.open { display: flex; }
+  .modal { width: 100%; max-width: 540px; background: var(--panel); border: 1px solid var(--border); }
+  .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--border); gap: 12px; }
+  .modal-header h3 { font-family: var(--sans); font-size: 15px; margin: 0 0 4px; }
+  .modal-header .sub { color: var(--text-muted); font-size: 11.5px; }
+  .modal-close { background: none; border: none; font-size: 18px; color: var(--text-muted); flex-shrink: 0; }
+  .modal-body { padding: 20px; }
+  .modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .modal-facts { background: var(--panel-raised); border: 1px solid var(--border); padding: 10px 14px; margin: 14px 0; }
+  .modal-facts .fact { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: 12px; border-top: 1px solid var(--border); }
+  .modal-facts .fact:first-child { border-top: none; }
+  .modal-facts .fact-label { color: var(--text-muted); }
+  .mode-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .mode-tab { padding: 8px 12px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid var(--border); background: var(--panel); color: var(--text-muted); }
+  .mode-tab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .fix-fields { display: flex; flex-direction: column; gap: 10px; }
+  .reupload-drop { border: 2px dashed var(--border); padding: 24px; text-align: center; cursor: pointer; }
+  .reupload-drop:hover { border-color: var(--accent); background: var(--accent-bg); }
+
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: var(--bg); padding: 12px 16px; font-size: 13px; z-index: 100; display: none; max-width: 340px; }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-label">Online Sales</span>
+      <span class="brand-title">Tally Automation Agent</span>
+    </div>
+    <div class="sidebar-heading">Platforms</div>
+    <div class="platform-list" id="platformList"></div>
+    <div class="add-platform-row"><button id="addPlatformBtn">+ Add platform</button></div>
+    <div class="sidebar-footer">
+      <a href="/admin">⚙ Configure Logic</a>
+      <button id="logoutBtn">Sign out</button>
+    </div>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <select id="runSelect"></select>
+      <button class="btn btn-outline btn-sm" id="newRunBtn">+ New period</button>
+    </div>
+
+    <div class="content">
+      <h1 class="page-intro" id="pageTitle">Build the <em>Tally sales register</em>.</h1>
+      <p class="page-sub">Upload the month's reports, clear what the agent flags, and take away one sheet ready for Tally.</p>
+
+      <div class="step-stepper" id="stepper"></div>
+
+      <!-- STEP 1: input sheets -->
+      <section class="panel" id="inputPanel">
+        <div class="panel-header">
+          <div>
+            <h2>Input sheets</h2>
+            <p class="hint">A Master file (optional if nothing new was added) and a Sample Tally sheet, plus at least one sales report.</p>
+          </div>
+          <span class="chip chip-green" id="inputReadyChip" style="display:none;">Ready</span>
+        </div>
+
+        <div class="card-grid">
+          <div class="upload-card">
+            <h3>Master File <span class="optional-badge">optional</span></h3>
+            <p class="hint">Maps this platform's SKU/ASIN to your internal product codes.</p>
+            <div class="dropzone" id="dz-master">Drag a file here or <span class="browse">browse</span></div>
+            <div id="files-master"></div>
+          </div>
+          <div class="upload-card">
+            <h3>Sample Tally Sheet <span class="required-badge">Required</span></h3>
+            <p class="hint">Defines the exact output columns to fill.</p>
+            <div class="dropzone" id="dz-sample_tally">Drag a file here or <span class="browse">browse</span></div>
+            <div id="files-sample_tally"></div>
+          </div>
+        </div>
+
+        <div class="upload-card" style="margin-top:16px;">
+          <h3>Sales Reports <span class="required-badge">Required*</span></h3>
+          <p class="hint">e.g. MTR B2C, MTR B2B - tag each one with its report type.</p>
+          <div id="salesFilesList"></div>
+          <div class="add-report-row">
+            <input type="text" id="reportOrderType" list="orderTypeSuggestions" placeholder="Report type - e.g. B2C, B2B" />
+            <datalist id="orderTypeSuggestions"><option value="B2C"><option value="B2B"><option value="General"></datalist>
+            <button class="btn btn-outline btn-sm" id="reportBrowseBtn">+ Add report</button>
+            <input type="file" id="reportFileInput" style="display:none" />
+          </div>
+        </div>
+
+        <div class="upload-card" style="margin-top:16px;">
+          <h3>Additional Files</h3>
+          <p class="hint">Anything else the agent might need, for reference.</p>
+          <div id="otherFilesList"></div>
+          <div class="add-report-row">
+            <input type="text" id="otherFileLabel" placeholder="Label, e.g. HSN code list" />
+            <button class="btn btn-outline btn-sm" id="otherFileBrowseBtn">Choose file…</button>
+            <input type="file" id="otherFileInput" style="display:none" />
+          </div>
+        </div>
+
+        <div class="continue-row">
+          <button class="btn" id="checkSheetsBtn" disabled>▶ Check the sheets</button>
+        </div>
+      </section>
+
+      <!-- STEP 2: input exceptions -->
+      <section class="panel" id="inputIssuesPanel" style="display:none;">
+        <div class="panel-header">
+          <div>
+            <h2>Exceptions in the uploaded sheets</h2>
+            <p class="hint" id="inputIssuesHint"></p>
+          </div>
+          <span class="chip" id="inputIssuesChip"></span>
+        </div>
+        <div class="issue-list" id="inputIssuesList"></div>
+        <div class="continue-row">
+          <button class="btn" id="toBuildBtn" disabled>Continue →</button>
+        </div>
+      </section>
+
+      <!-- STEP 3: build -->
+      <section class="panel" id="buildPanel" style="display:none;">
+        <h2>Build the Tally sheet</h2>
+        <p class="hint">Pick which slice of this run's data to generate - one Tally sheet per order type and location.</p>
+        <div class="slice-form">
+          <div class="slice-field"><label>Order type</label><select id="sliceOrderType"><option value="">All order types</option></select></div>
+          <div class="slice-field"><label>Location (Godown)</label><select id="sliceLocation"><option value="">All locations</option></select></div>
+          <button class="btn btn-terracotta" id="buildBtn">✨ Build the Tally sheet</button>
+        </div>
+        <div id="generationsList"></div>
+      </section>
+
+      <!-- STEP 4: agent run + final exceptions + output -->
+      <section class="panel" id="agentPanel" style="display:none;">
+        <h2>Agent run</h2>
+        <p class="hint">Mapping the sales reports, resolving SKUs, applying rules, computing totals.</p>
+        <ul class="agent-log" id="agentLog"></ul>
+      </section>
+
+      <section class="panel" id="finalIssuesPanel" style="display:none;">
+        <div class="panel-header">
+          <div>
+            <h2>Exceptions in the final sheet</h2>
+            <p class="hint" id="finalIssuesHint"></p>
+          </div>
+          <span class="chip" id="finalIssuesChip"></span>
+        </div>
+        <div class="issue-list" id="finalIssuesList"></div>
+      </section>
+
+      <section class="panel" id="outputPanel" style="display:none;">
+        <div class="panel-header">
+          <div><h2 id="outputTitle">Output</h2></div>
+        </div>
+        <div class="stat-row" id="statRow"></div>
+        <div class="table-scroll">
+          <table id="rowsTable">
+            <thead><tr><th>Order ID</th><th>SKU</th><th>Internal Code</th><th>Voucher Type</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Status</th></tr></thead>
+            <tbody id="rowsBody"></tbody>
+          </table>
+        </div>
+        <div class="warning-banner" id="pendingWarning" style="display:none;"></div>
+        <div class="output-grid" style="margin-top:16px;">
+          <div class="output-card">
+            <h3>Excel Output (.xlsx)</h3>
+            <p>Matches your sample Tally sheet's exact columns.</p>
+            <a class="btn" id="downloadExcelBtn" href="#">Download for Tally</a>
+          </div>
+          <div class="output-card">
+            <h3>Email the sheet</h3>
+            <p>Send the Excel file straight to your accounts team.</p>
+            <button class="btn btn-outline" id="emailBtn">✉ Email the sheet</button>
+          </div>
+        </div>
+        <div class="continue-row">
+          <a class="btn btn-outline btn-sm" id="downloadXmlBtn" href="#">Download Tally XML</a>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- Exception modal -->
+<div class="modal-overlay" id="issueModalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <h3 id="issueModalTitle"></h3>
+        <div class="sub" id="issueModalSource"></div>
+      </div>
+      <button class="modal-close" onclick="closeIssueModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="issueModalBody" style="font-size:13px; color:var(--text-muted); margin:0 0 4px;"></p>
+      <div class="modal-facts" id="issueModalFacts"></div>
+      <div class="mode-tabs" id="issueModeTabs"></div>
+      <div id="issueModeSuggest" style="display:none;">
+        <p style="font-size:13px;" id="suggestSummary"></p>
+        <div id="suggestChanges"></div>
+      </div>
+      <div id="issueModeFix" style="display:none;">
+        <p class="hint" id="fixNote" style="color:var(--text-muted); font-size:12px;"></p>
+        <div class="fix-fields" id="fixFields"></div>
+      </div>
+      <div id="issueModeReupload" style="display:none;">
+        <p class="hint" id="reuploadNote" style="color:var(--text-muted); font-size:12px;"></p>
+        <div class="reupload-drop" id="reuploadDrop">Click to choose a replacement file · .xlsx or .csv</div>
+        <input type="file" id="reuploadInput" style="display:none" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" onclick="closeIssueModal()">Decide later</button>
+      <div id="issueModalActions"></div>
+    </div>
+  </div>
+</div>
+
+<!-- New platform modal -->
+<div class="modal-overlay" id="newPlatformModalOverlay">
+  <div class="modal">
+    <div class="modal-header"><h3>Add a platform</h3><button class="modal-close" onclick="closeNewPlatformModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field-row"><label>Platform name</label><input type="text" id="newPlatformName" placeholder="e.g. Snapdeal, Own Website" /></div>
+    </div>
+    <div class="modal-footer" style="justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="closeNewPlatformModal()">Cancel</button>
+      <button class="btn" id="createPlatformBtn">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- New run modal -->
+<div class="modal-overlay" id="newRunModalOverlay">
+  <div class="modal">
+    <div class="modal-header"><h3>New period</h3><button class="modal-close" onclick="closeNewRunModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field-row"><label>Period label</label><input type="text" id="newRunLabel" placeholder="e.g. August 2026" /></div>
+    </div>
+    <div class="modal-footer" style="justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="closeNewRunModal()">Cancel</button>
+      <button class="btn" id="createRunBtn">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Email modal -->
+<div class="modal-overlay" id="emailModalOverlay">
+  <div class="modal">
+    <div class="modal-header"><h3>Email the sheet</h3><button class="modal-close" onclick="closeEmailModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field-row" style="margin-bottom:10px;"><label>To</label><input type="text" id="emailTo" /></div>
+      <div class="field-row" style="margin-bottom:10px;"><label>Cc</label><input type="text" id="emailCc" /></div>
+      <div class="field-row" style="margin-bottom:10px;"><label>Subject</label><input type="text" id="emailSubject" /></div>
+      <div class="field-row"><label>Note</label><textarea id="emailNote" rows="4"></textarea></div>
+    </div>
+    <div class="modal-footer" style="justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="closeEmailModal()">Cancel</button>
+      <button class="btn" id="sendEmailBtn">Send</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const STATE = {
+  platforms: [], activePlatform: null, runs: [], runId: null, run: null,
+  files: [], inputIssues: [], slices: { order_types: [], locations: [] },
+  generation: null, generations: [], finalIssues: [], activeIssue: null,
+  eventPollTimer: null, statusPollTimer: null,
+};
+
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('unauthenticated'); }
+  return res;
+}
+async function apiJson(url, opts = {}) {
+  const res = await apiFetch(url, opts);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || 'Request failed');
+  return body;
+}
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+function fmtSize(n) {
+  if (n > 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if (n > 1024) return (n / 1024).toFixed(0) + ' KB';
+  return n + ' B';
+}
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await apiFetch('/api/logout', { method: 'POST' });
+  window.location.href = '/login';
+});
+
+// ---------- platforms ----------
+async function loadPlatforms() {
+  STATE.platforms = await apiJson('/api/tally-platforms');
+  if (!STATE.activePlatform || !STATE.platforms.some(p => p.slug === STATE.activePlatform)) {
+    const stored = localStorage.getItem('tallyPlatform');
+    STATE.activePlatform = STATE.platforms.some(p => p.slug === stored) ? stored : (STATE.platforms[0] || {}).slug;
+  }
+  renderPlatformList();
+}
+function renderPlatformList() {
+  const container = document.getElementById('platformList');
+  container.innerHTML = '';
+  STATE.platforms.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'platform-item' + (p.slug === STATE.activePlatform ? ' active' : '');
+    btn.textContent = p.display_name;
+    btn.addEventListener('click', () => selectPlatform(p.slug));
+    container.appendChild(btn);
+  });
+}
+async function selectPlatform(slug) {
+  STATE.activePlatform = slug;
+  localStorage.setItem('tallyPlatform', slug);
+  renderPlatformList();
+  document.getElementById('pageTitle').innerHTML = `Build the <em>${platformName(slug)} sales register</em>.`;
+  await loadRuns();
+}
+function platformName(slug) {
+  const p = STATE.platforms.find(p => p.slug === slug);
+  return p ? p.display_name : slug;
+}
+
+document.getElementById('addPlatformBtn').addEventListener('click', () => {
+  document.getElementById('newPlatformName').value = '';
+  document.getElementById('newPlatformModalOverlay').classList.add('open');
+});
+function closeNewPlatformModal() { document.getElementById('newPlatformModalOverlay').classList.remove('open'); }
+document.getElementById('createPlatformBtn').addEventListener('click', async () => {
+  const name = document.getElementById('newPlatformName').value.trim();
+  if (!name) return;
+  try {
+    const platform = await apiJson('/api/tally-platforms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ display_name: name }) });
+    closeNewPlatformModal();
+    await loadPlatforms();
+    await selectPlatform(platform.slug);
+  } catch (e) { showToast(e.message); }
+});
+
+// ---------- runs (periods) ----------
+async function loadRuns() {
+  STATE.runs = await apiJson(`/api/tally-runs?platform_slug=${encodeURIComponent(STATE.activePlatform)}`);
+  const sel = document.getElementById('runSelect');
+  sel.innerHTML = '';
+  if (!STATE.runs.length) {
+    sel.innerHTML = '<option>No periods yet - create one</option>';
+    STATE.runId = null; STATE.run = null;
+    renderAll();
+    return;
+  }
+  STATE.runs.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r.id;
+    opt.textContent = `${r.period_label || ('Run #' + r.id)} — ${r.status}`;
+    sel.appendChild(opt);
+  });
+  const stored = localStorage.getItem('tallyRunId_' + STATE.activePlatform);
+  const match = STATE.runs.find(r => String(r.id) === stored);
+  STATE.runId = match ? match.id : STATE.runs[0].id;
+  sel.value = STATE.runId;
+  localStorage.setItem('tallyRunId_' + STATE.activePlatform, STATE.runId);
+  await refreshRun();
+}
+document.getElementById('runSelect').addEventListener('change', async (e) => {
+  if (!e.target.value || isNaN(parseInt(e.target.value))) return;
+  STATE.runId = parseInt(e.target.value);
+  localStorage.setItem('tallyRunId_' + STATE.activePlatform, STATE.runId);
+  await refreshRun();
+});
+document.getElementById('newRunBtn').addEventListener('click', () => {
+  document.getElementById('newRunLabel').value = '';
+  document.getElementById('newRunModalOverlay').classList.add('open');
+});
+function closeNewRunModal() { document.getElementById('newRunModalOverlay').classList.remove('open'); }
+document.getElementById('createRunBtn').addEventListener('click', async () => {
+  const label = document.getElementById('newRunLabel').value.trim();
+  try {
+    const run = await apiJson('/api/tally-runs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform_slug: STATE.activePlatform, period_label: label }) });
+    closeNewRunModal();
+    await loadRuns();
+    STATE.runId = run.id;
+    document.getElementById('runSelect').value = run.id;
+    localStorage.setItem('tallyRunId_' + STATE.activePlatform, run.id);
+    await refreshRun();
+  } catch (e) { showToast(e.message); }
+});
+
+async function refreshRun() {
+  clearTimeout(STATE.statusPollTimer);
+  if (!STATE.runId) { STATE.run = null; renderAll(); return; }
+  STATE.run = await apiJson(`/api/tally-runs/${STATE.runId}`);
+  await loadFiles();
+  if (STATE.run.status === 'needs_review' || STATE.run.status === 'ready') {
+    STATE.inputIssues = await apiJson(`/api/tally-runs/${STATE.runId}/review-items`);
+  } else {
+    STATE.inputIssues = [];
+  }
+  STATE.generations = await apiJson(`/api/tally-runs/${STATE.runId}/generations`);
+  const latestGen = STATE.generations[0] || null;
+  if (latestGen) await selectGeneration(latestGen.id, false);
+  else STATE.generation = null;
+  renderAll();
+}
+
+// ---------- files ----------
+async function loadFiles() {
+  STATE.files = STATE.runId ? await apiJson(`/api/tally-runs/${STATE.runId}/files`) : [];
+}
+
+async function ensureRun() {
+  if (STATE.runId) return STATE.runId;
+  const run = await apiJson('/api/tally-runs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform_slug: STATE.activePlatform, period_label: '' }) });
+  await loadRuns();
+  STATE.runId = run.id;
+  document.getElementById('runSelect').value = run.id;
+  localStorage.setItem('tallyRunId_' + STATE.activePlatform, run.id);
+  return STATE.runId;
+}
+
+async function uploadFile(fileObj, role, extra) {
+  extra = extra || {};
+  await ensureRun();
+  const fd = new FormData();
+  fd.append('file', fileObj);
+  fd.append('file_role', role);
+  fd.append('label', extra.label || '');
+  fd.append('order_type', extra.order_type || '');
+  const res = await apiFetch(`/api/tally-runs/${STATE.runId}/files`, { method: 'POST', body: fd });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    showToast(body.detail || 'Upload failed');
+    return;
+  }
+  await refreshRun();
+}
+async function removeFile(fileId) {
+  await apiFetch(`/api/tally-runs/${STATE.runId}/files/${fileId}`, { method: 'DELETE' });
+  await refreshRun();
+}
+
+['master', 'sample_tally'].forEach(role => {
+  const dz = document.getElementById('dz-' + role);
+  const input = document.createElement('input');
+  input.type = 'file'; input.style.display = 'none';
+  input.addEventListener('change', () => { if (input.files[0]) uploadFile(input.files[0], role); input.value = ''; });
+  dz.appendChild(input);
+  dz.addEventListener('click', () => input.click());
+  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+  dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0], role); });
+});
+document.getElementById('reportBrowseBtn').addEventListener('click', () => document.getElementById('reportFileInput').click());
+document.getElementById('reportFileInput').addEventListener('change', async (e) => {
+  if (e.target.files[0]) {
+    const orderType = document.getElementById('reportOrderType').value.trim() || 'General';
+    await uploadFile(e.target.files[0], 'sales', { order_type: orderType });
+    document.getElementById('reportOrderType').value = '';
+  }
+  e.target.value = '';
+});
+document.getElementById('otherFileBrowseBtn').addEventListener('click', () => document.getElementById('otherFileInput').click());
+document.getElementById('otherFileInput').addEventListener('change', async (e) => {
+  if (e.target.files[0]) {
+    const label = document.getElementById('otherFileLabel').value.trim();
+    await uploadFile(e.target.files[0], 'other', { label });
+    document.getElementById('otherFileLabel').value = '';
+  }
+  e.target.value = '';
+});
+
+// ---------- render: everything ----------
+function renderAll() {
+  renderStepper();
+  renderFiles();
+  renderInputIssues();
+  renderBuildPanel();
+  renderAgentAndFinal();
+}
+
+function renderStepper() {
+  const steps = [
+    { label: 'Upload input sheets', done: !!STATE.run && STATE.run.status !== 'draft' },
+    { label: 'Clear exceptions', done: !!STATE.run && (STATE.run.status === 'ready') },
+    { label: 'Generate Tally sheet', done: !!STATE.generation && STATE.generation.status === 'ready' },
+  ];
+  const el = document.getElementById('stepper');
+  el.innerHTML = '';
+  steps.forEach((s, i) => {
+    const wrap = document.createElement('div'); wrap.className = 'step-pill';
+    wrap.innerHTML = `<div class="step-num ${s.done ? 'done' : ''}">${s.done ? '✓' : i + 1}</div><div class="step-label ${s.done ? 'done' : ''}">${s.label}</div>`;
+    el.appendChild(wrap);
+    if (i < steps.length - 1) { const sep = document.createElement('div'); sep.className = 'step-sep'; el.appendChild(sep); }
+  });
+}
+
+function renderFiles() {
+  ['master', 'sample_tally'].forEach(role => {
+    const container = document.getElementById('files-' + role);
+    container.innerHTML = '';
+    STATE.files.filter(f => f.file_role === role).forEach(f => {
+      const chip = document.createElement('div'); chip.className = 'file-chip';
+      chip.innerHTML = `<div><div>${f.original_filename}</div><div class="meta">${fmtSize(f.size_bytes)}</div>${f.sheet_names.length ? `<div class="sheets">Sheets: ${f.sheet_names.join(', ')}</div>` : ''}</div><button data-id="${f.id}">✕</button>`;
+      chip.querySelector('button').addEventListener('click', () => removeFile(f.id));
+      container.appendChild(chip);
+    });
+  });
+  const salesList = document.getElementById('salesFilesList');
+  salesList.innerHTML = '';
+  STATE.files.filter(f => f.file_role === 'sales').forEach(f => {
+    const chip = document.createElement('div'); chip.className = 'file-chip';
+    chip.innerHTML = `<div><span class="order-type-badge">${f.order_type || 'General'}</span>${f.original_filename} <span class="meta">${fmtSize(f.size_bytes)}</span>${f.sheet_names.length ? `<div class="sheets">Sheets: ${f.sheet_names.join(', ')}</div>` : ''}</div><button data-id="${f.id}">✕</button>`;
+    chip.querySelector('button').addEventListener('click', () => removeFile(f.id));
+    salesList.appendChild(chip);
+  });
+  const otherList = document.getElementById('otherFilesList');
+  otherList.innerHTML = '';
+  STATE.files.filter(f => f.file_role === 'other').forEach(f => {
+    const chip = document.createElement('div'); chip.className = 'file-chip';
+    chip.innerHTML = `<div><div>${f.label ? f.label + ' — ' : ''}${f.original_filename}</div><div class="meta">${fmtSize(f.size_bytes)}</div></div><button data-id="${f.id}">✕</button>`;
+    chip.querySelector('button').addEventListener('click', () => removeFile(f.id));
+    otherList.appendChild(chip);
+  });
+  const hasSales = STATE.files.some(f => f.file_role === 'sales');
+  const hasSample = STATE.files.some(f => f.file_role === 'sample_tally');
+  document.getElementById('checkSheetsBtn').disabled = !(hasSales && hasSample) || !STATE.runId;
+  document.getElementById('inputReadyChip').style.display = (hasSales && hasSample) ? 'inline-flex' : 'none';
+}
+
+document.getElementById('checkSheetsBtn').addEventListener('click', async () => {
+  try {
+    STATE.run = await apiJson(`/api/tally-runs/${STATE.runId}/validate`, { method: 'POST' });
+    STATE.inputIssues = await apiJson(`/api/tally-runs/${STATE.runId}/review-items`);
+    renderAll();
+  } catch (e) { showToast(e.message); }
+});
+
+function renderInputIssues() {
+  const panel = document.getElementById('inputIssuesPanel');
+  if (!STATE.run || STATE.run.status === 'draft') { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  const resolved = STATE.inputIssues.filter(i => i.status !== 'pending').length;
+  const total = STATE.inputIssues.length;
+  const allDone = resolved === total;
+  document.getElementById('inputIssuesHint').textContent = allDone
+    ? 'All clear. You can build the Tally sheet.'
+    : "Each one can be fixed here or sent back for a fresh upload.";
+  const chip = document.getElementById('inputIssuesChip');
+  chip.className = 'chip ' + (allDone ? 'chip-green' : 'chip-amber');
+  chip.textContent = `${resolved} of ${total} resolved`;
+  renderIssueList('inputIssuesList', STATE.inputIssues, 'input');
+  document.getElementById('toBuildBtn').disabled = !allDone;
+}
+document.getElementById('toBuildBtn').addEventListener('click', () => {
+  document.getElementById('buildPanel').scrollIntoView({ behavior: 'smooth' });
+});
+
+function renderIssueList(containerId, items, scope) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  if (!items.length) { container.innerHTML = '<div class="empty-state">No exceptions.</div>'; return; }
+  items.forEach(item => {
+    const row = document.createElement('div'); row.className = 'issue-row';
+    const resolved = item.status !== 'pending';
+    const icon = resolved ? `<div class="issue-icon done">✓</div>` : `<div class="issue-icon ${item.severity}">${item.severity === 'error' ? '!' : '·'}</div>`;
+    row.innerHTML = `${icon}<div class="issue-body"><div class="issue-title ${resolved ? 'resolved' : ''}">${item.title}</div><div class="issue-meta">${item.source_label || ''}${item.source_label && item.location_label ? ' · ' : ''}${item.location_label || ''}</div></div>`;
+    if (resolved) {
+      row.innerHTML += `<span class="chip chip-green">${item.resolution_mode === 'reupload' ? 'Sheet re-uploaded' : item.resolution_mode === 'suggest' ? 'Suggestion approved' : 'Fixed'}</span>`;
+    } else {
+      const btn = document.createElement('button'); btn.className = 'btn btn-outline btn-sm'; btn.textContent = 'Resolve';
+      btn.addEventListener('click', () => openIssueModal(item, scope));
+      row.appendChild(btn);
+    }
+    container.appendChild(row);
+  });
+}
+
+// ---------- build panel ----------
+async function renderBuildPanel() {
+  const panel = document.getElementById('buildPanel');
+  if (!STATE.run || STATE.run.status !== 'ready') { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  try {
+    STATE.slices = await apiJson(`/api/tally-runs/${STATE.runId}/slices`);
+  } catch (e) { STATE.slices = { order_types: [], locations: [] }; }
+  const otSel = document.getElementById('sliceOrderType');
+  const locSel = document.getElementById('sliceLocation');
+  otSel.innerHTML = '<option value="">All order types</option>' + STATE.slices.order_types.map(o => `<option value="${o}">${o}</option>`).join('');
+  locSel.innerHTML = '<option value="">All locations</option>' + STATE.slices.locations.map(l => `<option value="${l}">${l}</option>`).join('');
+
+  const list = document.getElementById('generationsList');
+  list.innerHTML = '';
+  if (STATE.generations.length) {
+    const heading = document.createElement('p');
+    heading.className = 'hint'; heading.style.marginTop = '18px';
+    heading.textContent = 'Previously built:';
+    list.appendChild(heading);
+    STATE.generations.forEach(g => {
+      const row = document.createElement('div'); row.className = 'issue-row';
+      const label = [g.order_type, g.location].filter(Boolean).join(' · ') || 'All rows';
+      row.innerHTML = `<div class="issue-body"><div class="issue-title">${label}</div><div class="issue-meta">${g.status} · ${g.total_rows} row(s)</div></div>`;
+      const btn = document.createElement('button'); btn.className = 'btn btn-outline btn-sm'; btn.textContent = 'View';
+      btn.addEventListener('click', () => selectGeneration(g.id, true));
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+  }
+}
+document.getElementById('buildBtn').addEventListener('click', async () => {
+  const order_type = document.getElementById('sliceOrderType').value;
+  const location = document.getElementById('sliceLocation').value;
+  try {
+    const gen = await apiJson('/api/tally-generations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: STATE.runId, order_type, location }) });
+    STATE.generations = await apiJson(`/api/tally-runs/${STATE.runId}/generations`);
+    await selectGeneration(gen.id, true);
+  } catch (e) { showToast(e.message); }
+});
+
+async function selectGeneration(id, scroll) {
+  STATE.generation = await apiJson(`/api/tally-generations/${id}`);
+  renderBuildPanel();
+  renderAgentAndFinal();
+  if (STATE.generation.status === 'processing') pollGenerationStatus();
+  if (scroll) document.getElementById('agentPanel').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function pollGenerationStatus() {
+  clearTimeout(STATE.statusPollTimer);
+  if (!STATE.generation) return;
+  const g = await apiJson(`/api/tally-generations/${STATE.generation.id}`);
+  STATE.generation = g;
+  renderAgentAndFinal();
+  if (g.status === 'processing') {
+    STATE.statusPollTimer = setTimeout(pollGenerationStatus, 700);
+  }
+}
+
+// ---------- agent log + final exceptions + output ----------
+async function renderAgentAndFinal() {
+  const agentPanel = document.getElementById('agentPanel');
+  const finalPanel = document.getElementById('finalIssuesPanel');
+  const outputPanel = document.getElementById('outputPanel');
+  clearTimeout(STATE.eventPollTimer);
+
+  if (!STATE.generation) {
+    agentPanel.style.display = 'none'; finalPanel.style.display = 'none'; outputPanel.style.display = 'none';
+    return;
+  }
+  agentPanel.style.display = 'block';
+  const events = await apiJson(`/api/tally-generations/${STATE.generation.id}/events`);
+  const log = document.getElementById('agentLog');
+  log.innerHTML = events.map(e => `<li class="done"><span class="dot"></span>${e.message}</li>`).join('') || '<li><span class="dot"></span>Starting…</li>';
+  if (STATE.generation.status === 'processing') {
+    STATE.eventPollTimer = setTimeout(renderAgentAndFinal, 700);
+    finalPanel.style.display = 'none'; outputPanel.style.display = 'none';
+    return;
+  }
+
+  finalPanel.style.display = 'block';
+  STATE.finalIssues = await apiJson(`/api/tally-generations/${STATE.generation.id}/review-items`);
+  const resolved = STATE.finalIssues.filter(i => i.status !== 'pending').length;
+  const total = STATE.finalIssues.length;
+  document.getElementById('finalIssuesHint').textContent = (resolved === total)
+    ? 'Nothing left open. The sheet is ready to leave the platform.'
+    : 'Same ways out: fix here, or re-upload the source file.';
+  const chip = document.getElementById('finalIssuesChip');
+  chip.className = 'chip ' + (resolved === total ? 'chip-green' : 'chip-amber');
+  chip.textContent = `${resolved} of ${total} resolved`;
+  renderIssueList('finalIssuesList', STATE.finalIssues, 'final');
+
+  outputPanel.style.display = 'block';
+  const label = [STATE.generation.order_type, STATE.generation.location].filter(Boolean).join(' · ') || 'All rows';
+  document.getElementById('outputTitle').textContent = `Output — ${label}`;
+  document.getElementById('statRow').innerHTML = `
+    <div class="stat-tile"><div class="n">${STATE.generation.total_rows}</div><div class="l">Total</div></div>
+    <div class="stat-tile"><div class="n">${STATE.generation.total_rows - STATE.generation.flagged_rows}</div><div class="l">OK</div></div>
+    <div class="stat-tile"><div class="n">${STATE.generation.flagged_rows}</div><div class="l">Flagged</div></div>
+    <div class="stat-tile"><div class="n">${STATE.generation.review_pending_count}</div><div class="l">Pending review</div></div>`;
+  const rowsData = await apiJson(`/api/tally-generations/${STATE.generation.id}/output-rows?page_size=100`);
+  const body = document.getElementById('rowsBody');
+  body.innerHTML = rowsData.rows.map(r => {
+    const d = r.data;
+    return `<tr class="row-${r.status}">
+      <td>${r.order_id || ''}</td><td>${r.sku || ''}</td><td>${d.internal_product_code || '—'}</td>
+      <td>${d.voucher_type || '—'}</td><td>${d.taxable_value ?? ''}</td>
+      <td>${d.cgst_amount ?? ''}</td><td>${d.sgst_amount ?? ''}</td><td>${d.igst_amount ?? ''}</td>
+      <td><span class="status-badge status-${r.status}">${r.status}</span></td>
+    </tr>`;
+  }).join('');
+
+  const pending = STATE.generation.review_pending_count > 0;
+  const warn = document.getElementById('pendingWarning');
+  warn.style.display = pending ? 'block' : 'none';
+  warn.textContent = `${STATE.generation.review_pending_count} row(s) are still pending review and will be excluded from the Tally XML file until resolved.`;
+  document.getElementById('downloadExcelBtn').href = `/api/tally-generations/${STATE.generation.id}/download/excel`;
+  document.getElementById('downloadXmlBtn').href = `/api/tally-generations/${STATE.generation.id}/download/tally-xml`;
+}
+
+// ---------- issue modal (3 modes: suggest / fix / reupload) ----------
+const MODE_LABELS = { suggest: 'AI suggestion', fix: 'Fix here', reupload: 'Re-upload sheet' };
+
+function openIssueModal(item, scope) {
+  STATE.activeIssue = { item, scope };
+  document.getElementById('issueModalTitle').textContent = item.title;
+  document.getElementById('issueModalSource').textContent = [item.source_label, item.location_label].filter(Boolean).join(' · ');
+  document.getElementById('issueModalBody').textContent = item.body || '';
+  const detail = item.detail || {};
+  const facts = document.getElementById('issueModalFacts');
+  facts.innerHTML = (detail.facts || []).map(f => `<div class="fact"><span class="fact-label">${f.label}</span><span>${f.value}</span></div>`).join('');
+  const modes = detail.available_modes || ['fix'];
+  const tabs = document.getElementById('issueModeTabs');
+  tabs.innerHTML = '';
+  let activeMode = detail.default_mode || modes[0];
+  modes.forEach(m => {
+    const btn = document.createElement('button');
+    btn.className = 'mode-tab' + (m === activeMode ? ' active' : '');
+    btn.textContent = MODE_LABELS[m] || m;
+    btn.addEventListener('click', () => showIssueMode(m));
+    tabs.appendChild(btn);
+  });
+  showIssueMode(activeMode);
+  document.getElementById('issueModalOverlay').classList.add('open');
+}
+function closeIssueModal() { document.getElementById('issueModalOverlay').classList.remove('open'); STATE.activeIssue = null; }
+
+function showIssueMode(mode) {
+  const { item } = STATE.activeIssue;
+  const detail = item.detail || {};
+  document.querySelectorAll('#issueModeTabs .mode-tab').forEach(b => b.classList.toggle('active', (MODE_LABELS[mode] || mode) === b.textContent));
+  document.getElementById('issueModeSuggest').style.display = mode === 'suggest' ? 'block' : 'none';
+  document.getElementById('issueModeFix').style.display = mode === 'fix' ? 'block' : 'none';
+  document.getElementById('issueModeReupload').style.display = mode === 'reupload' ? 'block' : 'none';
+
+  const actions = document.getElementById('issueModalActions');
+  actions.innerHTML = '';
+  if (mode === 'suggest') {
+    const s = detail.suggestion || {};
+    document.getElementById('suggestSummary').textContent = `${s.summary || ''} (confidence: ${s.confidence || 'n/a'})`;
+    document.getElementById('suggestChanges').innerHTML = (s.changes || []).map(c => `<div class="modal-facts" style="margin:6px 0;"><div class="fact"><span style="text-decoration:line-through; color:var(--text-muted);">${c.from}</span><span>→ ${c.to}</span></div></div>`).join('');
+    const reject = document.createElement('button'); reject.className = 'btn btn-outline btn-sm'; reject.textContent = 'Reject';
+    reject.addEventListener('click', () => resolveIssue('reject-suggestion'));
+    const approve = document.createElement('button'); approve.className = 'btn btn-sm'; approve.textContent = 'Approve';
+    approve.addEventListener('click', () => resolveIssue('approve-suggestion'));
+    actions.appendChild(reject); actions.appendChild(approve);
+  } else if (mode === 'fix') {
+    const fix = detail.fix || { note: '', fields: [] };
+    document.getElementById('fixNote').textContent = fix.note || '';
+    const fieldsEl = document.getElementById('fixFields');
+    fieldsEl.innerHTML = '';
+    (fix.fields || []).forEach(f => {
+      const row = document.createElement('div'); row.className = 'field-row';
+      row.innerHTML = `<label>${f.label}</label><input type="text" data-key="${f.key}" value="${f.value || ''}" placeholder="${f.placeholder || ''}" />`;
+      fieldsEl.appendChild(row);
+    });
+    const save = document.createElement('button'); save.className = 'btn btn-sm'; save.textContent = 'Save changes';
+    save.addEventListener('click', () => {
+      const values = {};
+      fieldsEl.querySelectorAll('input').forEach(i => { values[i.dataset.key] = i.value; });
+      resolveIssue('apply-fix', { values });
+    });
+    actions.appendChild(save);
+  } else if (mode === 'reupload') {
+    const reup = detail.reupload || {};
+    document.getElementById('reuploadNote').textContent = reup.note || '';
+    const drop = document.getElementById('reuploadDrop');
+    const input = document.getElementById('reuploadInput');
+    drop.onclick = () => input.click();
+    input.onchange = () => {
+      if (input.files[0]) {
+        const fd = new FormData(); fd.append('file', input.files[0]);
+        resolveIssueUpload(fd);
+      }
+      input.value = '';
+    };
+  }
+}
+
+async function resolveIssue(action, body) {
+  const { item, scope } = STATE.activeIssue;
+  try {
+    await apiJson(`/api/tally-review-items/${item.id}/${action}`, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' });
+    closeIssueModal();
+    showToast('Resolved.');
+    if (scope === 'input') { STATE.inputIssues = await apiJson(`/api/tally-runs/${STATE.runId}/review-items`); STATE.run = await apiJson(`/api/tally-runs/${STATE.runId}`); renderAll(); }
+    else { await selectGeneration(STATE.generation.id, false); STATE.run = await apiJson(`/api/tally-runs/${STATE.runId}`); renderAll(); }
+  } catch (e) { showToast(e.message); }
+}
+async function resolveIssueUpload(fd) {
+  const { item, scope } = STATE.activeIssue;
+  try {
+    const res = await apiFetch(`/api/tally-review-items/${item.id}/reupload`, { method: 'POST', body: fd });
+    if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail || 'Upload failed'); }
+    closeIssueModal();
+    showToast('Sheet replaced — re-validated automatically.');
+    await refreshRun();
+  } catch (e) { showToast(e.message); }
+}
+
+// ---------- email ----------
+document.getElementById('emailBtn').addEventListener('click', () => {
+  const label = [STATE.generation.order_type, STATE.generation.location, STATE.run.period_label].filter(Boolean).join(' · ');
+  document.getElementById('emailTo').value = '';
+  document.getElementById('emailCc').value = '';
+  document.getElementById('emailSubject').value = `Tally sales register — ${platformName(STATE.activePlatform)} ${label}`;
+  document.getElementById('emailNote').value = `Attached is the Tally format sheet.\n\n${STATE.generation.total_rows} rows across this run. ${STATE.generation.review_pending_count ? STATE.generation.review_pending_count + ' item(s) still need review.' : 'All exceptions were resolved before export.'}\n\n— Online Sales`;
+  document.getElementById('emailModalOverlay').classList.add('open');
+});
+function closeEmailModal() { document.getElementById('emailModalOverlay').classList.remove('open'); }
+document.getElementById('sendEmailBtn').addEventListener('click', async () => {
+  const to = document.getElementById('emailTo').value.trim();
+  if (!to) { showToast('Enter a recipient email.'); return; }
+  try {
+    await apiJson(`/api/tally-generations/${STATE.generation.id}/email`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to, cc: document.getElementById('emailCc').value.trim(),
+        subject: document.getElementById('emailSubject').value.trim(),
+        note: document.getElementById('emailNote').value,
+      }),
+    });
+    closeEmailModal();
+    showToast(`Email sent to ${to}`);
+  } catch (e) { showToast(e.message); }
+});
+
+// ---------- init ----------
+(async function init() {
+  const me = await apiJson('/api/me').catch(() => ({ user: null }));
+  if (me.auth_enabled && !me.user) { window.location.href = '/login'; return; }
+  await loadPlatforms();
+  if (STATE.activePlatform) {
+    document.getElementById('pageTitle').innerHTML = `Build the <em>${platformName(STATE.activePlatform)} sales register</em>.`;
+    await loadRuns();
+  }
+})();
+</script>
+</body>
+</html>
