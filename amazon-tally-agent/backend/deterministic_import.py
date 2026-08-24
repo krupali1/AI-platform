@@ -78,6 +78,18 @@ def _extract_constant(text):
     return None
 
 
+def _extract_no_combo_column(text):
+    """'If no combo: "Quantity" column\\nIf combo: Rules for combo
+    apply' -> "Quantity". The combo/bundle branch is deliberately left
+    unmapped here - it's handled by the pipeline's own master-file
+    combo-unbundling logic (multiplier column, or the combo_sku_pattern
+    fallback), not by field mapping, so there's nothing to map it to.
+    This only recovers the literal base-case column name for the
+    ordinary (non-combo) row."""
+    m = re.search(r'if\s+no\s+combo\s*:\s*[\'"“]?([^\'"”\n]+?)[\'"”]?\s*column', text, re.I)
+    return m.group(1).strip() if m else None
+
+
 def _extract_order_type_branches(text):
     """'If B2B: Bill to postal code\\nIf B2C: Ship to Postal code' ->
     {"B2B": "Bill to postal code", "B2C": "Ship to Postal code"}.
@@ -153,8 +165,12 @@ def parse_column_mapping_sheet(parsed, sheet_name=None):
         if constant is not None:
             mappings.append({"target_field": key, "source_file_role": role or "sales", "order_type": "", "source_column_name": "", "constant_value": constant})
         else:
+            no_combo_col = _extract_no_combo_column(source_text)
             branches = _extract_order_type_branches(source_text)
-            if branches and role:
+            if no_combo_col and role:
+                mappings.append({"target_field": key, "source_file_role": role, "order_type": "", "source_column_name": no_combo_col, "constant_value": ""})
+                flagged.append({"label": f'"{tally_label}" combo handling', "reason": f'Mapped the base case ("{no_combo_col}"). Combo/bundle multiplication is handled separately by your Master File\'s combo setup (combo_sku_pattern in /admin → Ledger & Vouchers) - not a field mapping, nothing more to do here.'})
+            elif branches and role:
                 for order_type, col_name in branches.items():
                     mappings.append({"target_field": key, "source_file_role": role, "order_type": order_type, "source_column_name": col_name, "constant_value": ""})
             elif role and source_text and _looks_like_conditional(source_text):
