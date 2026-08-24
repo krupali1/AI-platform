@@ -1007,6 +1007,26 @@ def reject_suggestion(item_id: int, user: str = Depends(auth.require_login)):
     return out
 
 
+@app.post("/api/tally-review-items/{item_id}/defer")
+def defer_review_item(item_id: int, user: str = Depends(auth.require_login)):
+    """"Decide later" - acknowledges the exception without resolving
+    it, so it stops blocking progress but the underlying gap (a blank
+    column, an unmapped SKU) stays exactly as unresolved as before."""
+    session = SessionLocal()
+    item = session.query(TallyReviewItem).filter_by(id=item_id).first()
+    if not item:
+        session.close()
+        raise HTTPException(404, "Not found")
+    if item.status != "pending":
+        session.close()
+        raise HTTPException(409, "This item has already been resolved")
+    run = session.query(TallyRun).filter_by(id=item.run_id).first()
+    tally_pipeline.defer_review_item(session, run, item)
+    out = _review_item_out(item)
+    session.close()
+    return out
+
+
 @app.post("/api/tally-review-items/{item_id}/reupload")
 async def reupload_for_review_item(item_id: int, file: UploadFile = File(...), user: str = Depends(auth.require_login)):
     session = SessionLocal()

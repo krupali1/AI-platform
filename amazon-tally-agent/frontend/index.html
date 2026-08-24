@@ -426,7 +426,7 @@
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-outline btn-sm" onclick="closeIssueModal()">Decide later</button>
+      <button class="btn btn-outline btn-sm" onclick="resolveIssue('defer')">Decide later</button>
       <div id="issueModalActions"></div>
     </div>
   </div>
@@ -890,9 +890,12 @@ function renderIssueGroupRows(container, items, scope) {
   shown.forEach(item => {
     const row = document.createElement('div'); row.className = 'issue-row';
     const resolved = item.status !== 'pending';
-    const icon = resolved ? `<div class="issue-icon done">✓</div>` : `<div class="issue-icon ${item.severity}">${item.severity === 'error' ? '!' : '·'}</div>`;
-    row.innerHTML = `${icon}<div class="issue-body"><div class="issue-title ${resolved ? 'resolved' : ''}">${item.location_label || item.source_label || 'Row'}</div><div class="issue-meta">${item.source_label || ''}</div></div>`;
-    if (resolved) {
+    const deferred = item.resolution_mode === 'deferred';
+    const icon = deferred ? `<div class="issue-icon warning">·</div>` : resolved ? `<div class="issue-icon done">✓</div>` : `<div class="issue-icon ${item.severity}">${item.severity === 'error' ? '!' : '·'}</div>`;
+    row.innerHTML = `${icon}<div class="issue-body"><div class="issue-title ${resolved && !deferred ? 'resolved' : ''}">${item.location_label || item.source_label || 'Row'}</div><div class="issue-meta">${item.source_label || ''}</div></div>`;
+    if (deferred) {
+      row.innerHTML += `<span class="chip chip-amber">Deferred — column left blank</span>`;
+    } else if (resolved) {
       row.innerHTML += `<span class="chip chip-green">${item.resolution_mode === 'reupload' ? 'Sheet re-uploaded' : item.resolution_mode === 'suggest' ? 'Suggestion approved' : 'Fixed'}</span>`;
     } else {
       const btn = document.createElement('button'); btn.className = 'btn btn-outline btn-sm'; btn.textContent = 'Resolve';
@@ -1114,7 +1117,7 @@ async function resolveIssue(action, body) {
   try {
     await apiJson(`/api/tally-review-items/${item.id}/${action}`, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { method: 'POST' });
     closeIssueModal();
-    showToast('Resolved.');
+    showToast(action === 'defer' ? 'Left for later — the sheet still builds around it.' : 'Resolved.');
     if (scope === 'input') { STATE.inputIssues = await apiJson(`/api/tally-runs/${STATE.runId}/review-items`); STATE.run = await apiJson(`/api/tally-runs/${STATE.runId}`); renderAll(); }
     else { await selectGeneration(STATE.generation.id, false); STATE.run = await apiJson(`/api/tally-runs/${STATE.runId}`); renderAll(); }
   } catch (e) { showToast(e.message); }

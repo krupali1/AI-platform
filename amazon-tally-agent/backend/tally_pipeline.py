@@ -793,3 +793,26 @@ def reject_review_suggestion(session, item):
     item.status = "pending"
     item.resolution_mode = None
     session.commit()
+
+
+def defer_review_item(session, run, item):
+    """"Decide later" - explicitly acknowledges an exception without
+    fixing it. The affected row(s) are left exactly as they are -
+    whatever's blank stays blank, row.status is untouched (still
+    "flagged"/"escalated") - so the gap is still visible in the Excel
+    output and still correctly excluded from the Tally XML export,
+    which only takes "ok"/"resolved" rows. This only clears the
+    review queue's "pending" gate for this one item, so the rest of
+    the sheet isn't blocked on a column nobody's ready to answer yet."""
+    item.status = "answered"
+    item.resolution_mode = "deferred"
+    item.answer_value = json.dumps({"note": "Decided later - left unresolved on purpose"})
+    item.answered_at = datetime.datetime.utcnow()
+    session.commit()
+
+    if item.stage == "input":
+        finalize_run_validation(session, run)
+    elif item.generation_id:
+        generation = session.query(TallyGeneration).filter_by(id=item.generation_id).first()
+        if generation:
+            finalize_generation(session, generation)
