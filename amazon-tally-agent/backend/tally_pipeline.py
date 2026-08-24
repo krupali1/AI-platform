@@ -149,13 +149,30 @@ def _parse_file(f: TallyUploadedFile):
     return tally_parsing.parse_excel_file(f.file_blob, f.content_type, f.original_filename)
 
 
+def _normalize_col(s):
+    return re.sub(r"[\s_.\-]+", "", str(s or "")).strip().lower()
+
+
 def _apply_mapping_to_sheet(parsed, mappings):
     """Restricts to sheets actually referenced by a mapping (falls back
     to the file's first sheet if no mapping names one) - Amazon reports
     often ship extra instruction/summary sheets that must not be read
     as data rows. A mapping with constant_value set (Courier = "Amazon",
     Units = "Pcs", ...) injects that literal into every row regardless
-    of columns present, rather than reading from any column."""
+    of columns present, rather than reading from any column.
+
+    A mapped column name is resolved against the sheet's real headers
+    case/whitespace/punctuation-insensitively when there's no exact
+    match - "Warehouse ID" still resolves against a real header of
+    "Warehouse Id", "Bill to postal code" against "Bill To Postalcode".
+    This is real-world necessary: a PRD-style spec sheet's transcribed
+    column name and Amazon's actual export header routinely differ by
+    exactly this much, and an exact-match-only lookup would otherwise
+    silently leave the whole column blank with no error anywhere -
+    confirmed against a real upload where Godown/Billing_* were 100%
+    blank purely from this kind of mismatch. Never fuzzy-matches beyond
+    that (no typo tolerance) - a genuinely absent column still resolves
+    to nothing, same as before."""
     names = tally_parsing.sheet_names_of(parsed)
     if not names:
         return []
@@ -166,7 +183,20 @@ def _apply_mapping_to_sheet(parsed, mappings):
     for sheet in sheet_names:
         if sheet not in parsed:
             continue
-        col_map = {m.source_column_name: m.target_field for m in column_mappings if not m.source_sheet_name or m.source_sheet_name == sheet}
+        real_columns = tally_parsing.column_names_of(parsed, sheet)
+        real_by_norm = {_normalize_col(c): c for c in real_columns}
+        real_set = set(real_columns)
+        col_map = {}
+        for m in column_mappings:
+            if m.source_sheet_name and m.source_sheet_name != sheet:
+                continue
+            mapped_name = m.source_column_name
+            if mapped_name in real_set:
+                col_map[mapped_name] = m.target_field
+            else:
+                real = real_by_norm.get(_normalize_col(mapped_name))
+                if real:
+                    col_map[real] = m.target_field
         for row_num, raw in tally_parsing.rows_of(parsed, sheet):
             canonical = {}
             for col, field in col_map.items():
