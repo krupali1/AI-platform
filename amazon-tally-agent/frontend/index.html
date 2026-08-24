@@ -186,6 +186,17 @@
   .reupload-drop { border: 2px dashed var(--border); padding: 24px; text-align: center; cursor: pointer; }
   .reupload-drop:hover { border-color: var(--accent); background: var(--accent-bg); }
 
+  /* ---------- rule authoring (from the Exceptions panel) ---------- */
+  .rule-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .rule-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 8px; }
+  .rule-text { font-size: 13px; }
+  .rule-text code { font-family: var(--mono); font-size: 12px; background: var(--panel-raised); padding: 1px 5px; }
+  .rule-desc { color: var(--text-muted); font-size: 11.5px; margin-top: 2px; }
+  .rule-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .rule-actions button { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text-muted); }
+  .rule-actions button:hover { color: var(--text); border-color: var(--text); }
+  .ai-tag { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; color: var(--accent2); border: 1px solid var(--accent2); padding: 3px 8px; margin-bottom: 12px; }
+
   .toast { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: var(--bg); padding: 12px 16px; font-size: 13px; z-index: 100; display: none; max-width: 340px; }
 </style>
 </head>
@@ -313,6 +324,12 @@
           </div>
           <span class="chip" id="finalIssuesChip"></span>
         </div>
+        <div class="rule-toolbar">
+          <button class="btn btn-terracotta btn-sm" id="uploadRulesDocBtn">📄 Upload rules document</button>
+          <input type="file" id="rulesDocInput" accept=".txt,.md,.docx,.pdf,.xlsx,.xls,.csv" style="display:none" />
+          <button class="btn btn-terracotta btn-sm" id="typeRulesBtn">⌨ Type exceptions &amp; rules</button>
+        </div>
+        <p class="hint" style="margin-top:-6px;">Lots of rows failing on the same missing rule (voucher type, ledger, tax split…)? Upload a doc or type it here — the AI proposes rules, you review and save each one, and the sheet re-checks itself against them right away.</p>
         <div class="issue-list" id="finalIssuesList"></div>
       </section>
 
@@ -383,6 +400,83 @@
   </div>
 </div>
 
+<!-- Rule editor modal (add / edit a single rule, incl. reviewing an AI suggestion) -->
+<div class="modal-overlay" id="ruleModalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="ruleModalTitle">Add rule</h3>
+      <button class="modal-close" onclick="closeRuleModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ai-tag" id="aiTag" style="display:none;">AI SUGGESTION — REVIEW BEFORE SAVING</div>
+      <div class="field-row" style="margin-bottom:10px;">
+        <label>Rule group</label>
+        <select id="ruleGroupSelect"></select>
+      </div>
+      <div class="field-row" style="margin-bottom:10px;">
+        <label>If</label>
+        <div style="display:grid; grid-template-columns: 1.2fr 1fr; gap:8px;">
+          <select id="conditionField"></select>
+          <select id="conditionOperator"></select>
+        </div>
+      </div>
+      <div class="field-row" style="margin-bottom:10px;">
+        <label>Value (use $company_state to reference a ledger setting)</label>
+        <input type="text" id="conditionValue" />
+      </div>
+      <div class="field-row" style="margin-bottom:10px;">
+        <label>Then</label>
+        <select id="actionType"></select>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px;">
+        <div class="field-row"><label>Field (for set_field / use_ledger)</label><input type="text" id="actionField" /></div>
+        <div class="field-row"><label>Value (literal or a ledger config key)</label><input type="text" id="actionValue" /></div>
+      </div>
+      <div class="field-row">
+        <label>Description</label>
+        <input type="text" id="ruleDescription" placeholder="Plain-English label for this rule" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeRuleModal()">Cancel</button>
+      <button class="btn" id="saveRuleBtn">Save rule</button>
+    </div>
+  </div>
+</div>
+
+<!-- Type exceptions/rules modal -->
+<div class="modal-overlay" id="typeRulesModalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Type exceptions &amp; rules</h3>
+      <button class="modal-close" onclick="closeTypeRulesModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="hint">Type or paste what should happen — one edge case, or several. e.g. “Every row's Voucher Type should be Sales.” or “If Transaction Type is Cancelled, exclude the row.” The AI turns this into proposed rules; you still review and save each one.</p>
+      <textarea id="typeRulesText" rows="8" style="width:100%; padding:10px; border:1px solid var(--border); background:var(--bg); font-size:13px;" placeholder="e.g. Voucher Type should always be 'Sales'. Sales Ledger should always be 'Sales'."></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeTypeRulesModal()">Cancel</button>
+      <button class="btn btn-terracotta" id="getTypedSuggestionsBtn">Get suggestions</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rules found (from upload or typed text) -->
+<div class="modal-overlay" id="docRulesModalOverlay">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-header">
+      <h3>Rules found</h3>
+      <button class="modal-close" onclick="closeDocRulesModal()">✕</button>
+    </div>
+    <div class="modal-body" id="docRulesModalBody" style="max-height:65vh; overflow:auto;"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeDocRulesModal()">Close</button>
+      <button class="btn btn-terracotta" id="saveAllDocRulesBtn">Save all remaining</button>
+    </div>
+  </div>
+</div>
+
 <!-- New platform modal -->
 <div class="modal-overlay" id="newPlatformModalOverlay">
   <div class="modal">
@@ -436,7 +530,18 @@ const STATE = {
   files: [], inputIssues: [], slices: { order_types: [], locations: [] },
   generation: null, generations: [], finalIssues: [], activeIssue: null,
   eventPollTimer: null, statusPollTimer: null,
+  canonicalFields: [], editingRuleId: null, docRuleSuggestions: [],
 };
+
+const RULE_GROUP_META = {
+  row_filter: 'Row filter — which transactions to include at all (e.g. Transaction Type)',
+  escalation: 'Escalation — flag a row for human review',
+  tax_split: 'Tax split — CGST+SGST vs IGST',
+  voucher_type: 'Voucher type — which Tally voucher type to use',
+  ledger_mapping: 'Ledger mapping — which sales ledger to post to',
+};
+const CONDITION_OPERATORS = ['equals', 'not_equals', 'in', 'not_in', 'exists', 'not_exists', 'contains'];
+const ACTION_TYPES = ['set_field', 'escalate', 'split_tax', 'use_ledger', 'use_voucher_type', 'include_row', 'exclude_row'];
 
 async function apiFetch(url, opts = {}) {
   const res = await fetch(url, opts);
@@ -871,6 +976,171 @@ async function renderAgentAndFinal() {
   document.getElementById('downloadXmlBtn').href = `/api/tally-generations/${STATE.generation.id}/download/tally-xml`;
 }
 
+// ---------- rule authoring (upload a document or type rules directly) ----------
+async function loadCanonicalFields() {
+  STATE.canonicalFields = await apiJson('/api/tally-canonical-fields');
+}
+
+function populateRuleFormOptions() {
+  document.getElementById('ruleGroupSelect').innerHTML = Object.keys(RULE_GROUP_META).map(g => `<option value="${g}">${g}</option>`).join('');
+  document.getElementById('conditionOperator').innerHTML = CONDITION_OPERATORS.map(o => `<option value="${o}">${o}</option>`).join('');
+  document.getElementById('actionType').innerHTML = ACTION_TYPES.map(a => `<option value="${a}">${a}</option>`).join('');
+  document.getElementById('conditionField').innerHTML = STATE.canonicalFields.map(f => `<option value="${f.key}">${f.key}</option>`).join('');
+}
+
+function openRuleModal(rule, fromSuggestion) {
+  populateRuleFormOptions();
+  document.getElementById('aiTag').style.display = fromSuggestion ? 'inline-block' : 'none';
+  STATE.editingRuleId = rule && !fromSuggestion ? rule.id : null;
+  document.getElementById('ruleModalTitle').textContent = rule && !fromSuggestion ? 'Edit rule' : 'Add rule';
+  document.getElementById('ruleGroupSelect').value = (rule && rule.rule_group) || 'escalation';
+  document.getElementById('conditionField').value = (rule && rule.condition_field) || (STATE.canonicalFields[0] || {}).key;
+  document.getElementById('conditionOperator').value = (rule && rule.condition_operator) || 'equals';
+  document.getElementById('conditionValue').value = (rule && rule.condition_value) || '';
+  document.getElementById('actionType').value = (rule && rule.action_type) || 'escalate';
+  document.getElementById('actionField').value = (rule && rule.action_field) || '';
+  document.getElementById('actionValue').value = (rule && rule.action_value) || '';
+  document.getElementById('ruleDescription').value = (rule && rule.description) || '';
+  document.getElementById('ruleModalOverlay').classList.add('open');
+}
+function closeRuleModal() { document.getElementById('ruleModalOverlay').classList.remove('open'); }
+
+document.getElementById('saveRuleBtn').addEventListener('click', async () => {
+  const payload = {
+    rule_group: document.getElementById('ruleGroupSelect').value,
+    order_index: 0,
+    condition_field: document.getElementById('conditionField').value,
+    condition_operator: document.getElementById('conditionOperator').value,
+    condition_value: document.getElementById('conditionValue').value,
+    action_type: document.getElementById('actionType').value,
+    action_field: document.getElementById('actionField').value,
+    action_value: document.getElementById('actionValue').value,
+    is_active: true,
+    description: document.getElementById('ruleDescription').value,
+  };
+  try {
+    if (STATE.editingRuleId) {
+      await apiJson(`/api/tally-rules/${STATE.editingRuleId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    } else {
+      await apiJson('/api/tally-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    }
+    closeRuleModal();
+    showToast('Rule saved.');
+    await rerunAfterRuleChange();
+  } catch (e) { showToast(e.message); }
+});
+
+// Re-check the currently open generation against the pipeline's rules
+// right after a rule is saved from this page - the whole point of
+// putting rule-authoring here instead of only in /admin is to see the
+// exceptions queue react immediately.
+async function rerunAfterRuleChange() {
+  if (!STATE.generation) return;
+  try {
+    await apiFetch(`/api/tally-generations/${STATE.generation.id}/regenerate`, { method: 'POST' });
+    await selectGeneration(STATE.generation.id, false);
+  } catch (e) { /* non-fatal - the rule is saved either way */ }
+}
+
+document.getElementById('uploadRulesDocBtn').addEventListener('click', () => document.getElementById('rulesDocInput').click());
+document.getElementById('rulesDocInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  showToast(`Reading ${file.name}…`);
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await apiFetch('/api/tally-rules/suggest-from-document', { method: 'POST', body: fd });
+    const suggestions = await res.json();
+    if (!res.ok) throw new Error(suggestions.detail || 'Could not extract rules from that document.');
+    STATE.docRuleSuggestions = suggestions.map(s => ({ ...s, _saved: false, _discarded: false }));
+    if (STATE.docRuleSuggestions.some(s => s.demo)) showToast('No ANTHROPIC_API_KEY configured — showing demo suggestions.');
+    openDocRulesModal();
+  } catch (err) { showToast(err.message); }
+});
+
+document.getElementById('typeRulesBtn').addEventListener('click', () => {
+  document.getElementById('typeRulesText').value = '';
+  document.getElementById('typeRulesModalOverlay').classList.add('open');
+});
+function closeTypeRulesModal() { document.getElementById('typeRulesModalOverlay').classList.remove('open'); }
+document.getElementById('getTypedSuggestionsBtn').addEventListener('click', async () => {
+  const text = document.getElementById('typeRulesText').value.trim();
+  if (!text) return;
+  try {
+    const suggestions = await apiJson('/api/tally-rules/suggest-from-text', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    STATE.docRuleSuggestions = suggestions.map(s => ({ ...s, _saved: false, _discarded: false }));
+    if (STATE.docRuleSuggestions.some(s => s.demo)) showToast('No ANTHROPIC_API_KEY configured — showing demo suggestions.');
+    closeTypeRulesModal();
+    openDocRulesModal();
+  } catch (e) { showToast(e.message); }
+});
+
+function openDocRulesModal() {
+  renderDocRulesModal();
+  document.getElementById('docRulesModalOverlay').classList.add('open');
+}
+function closeDocRulesModal() { document.getElementById('docRulesModalOverlay').classList.remove('open'); }
+
+function renderDocRulesModal() {
+  const body = document.getElementById('docRulesModalBody');
+  const pending = STATE.docRuleSuggestions.filter(s => !s._saved && !s._discarded);
+  document.getElementById('saveAllDocRulesBtn').style.display = pending.length ? 'inline-block' : 'none';
+  if (!STATE.docRuleSuggestions.length) { body.innerHTML = '<div class="empty-state">No rules found in that.</div>'; return; }
+  body.innerHTML = '';
+  STATE.docRuleSuggestions.forEach((s, idx) => {
+    if (s._discarded) return;
+    const card = document.createElement('div');
+    card.className = 'rule-card';
+    const status = s._saved ? '<span class="status-badge status-ok" style="margin-left:8px;">saved</span>' : '';
+    card.innerHTML = `<div>
+        <div class="ai-tag" style="margin-bottom:6px;">AI SUGGESTION — REVIEW BEFORE SAVING</div>
+        <div class="rule-text">IF <code>${s.condition_field} ${s.condition_operator} ${s.condition_value || ''}</code> THEN <code>${s.action_type}${s.action_field ? ' ' + s.action_field : ''}${s.action_value ? ' = ' + s.action_value : ''}</code>${status}</div>
+        ${s.description ? `<div class="rule-desc">${s.description}</div>` : ''}
+      </div>
+      <div class="rule-actions">
+        ${s._saved ? '' : `<button data-a="edit">Edit</button><button data-a="save">Save</button><button data-a="discard">Discard</button>`}
+      </div>`;
+    if (!s._saved) {
+      card.querySelector('[data-a=edit]').addEventListener('click', () => {
+        closeDocRulesModal();
+        STATE.docRuleSuggestions[idx]._discarded = true;
+        openRuleModal(s, true);
+      });
+      card.querySelector('[data-a=save]').addEventListener('click', () => saveDocRule(idx));
+      card.querySelector('[data-a=discard]').addEventListener('click', () => { STATE.docRuleSuggestions[idx]._discarded = true; renderDocRulesModal(); });
+    }
+    body.appendChild(card);
+  });
+}
+
+async function saveDocRule(idx) {
+  const s = STATE.docRuleSuggestions[idx];
+  try {
+    await apiJson('/api/tally-rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rule_group: s.rule_group, order_index: s.order_index || 0, condition_field: s.condition_field,
+        condition_operator: s.condition_operator, condition_value: s.condition_value || '',
+        action_type: s.action_type, action_field: s.action_field || '', action_value: s.action_value || '',
+        is_active: true, description: s.description || '',
+      }),
+    });
+    STATE.docRuleSuggestions[idx]._saved = true;
+    renderDocRulesModal();
+  } catch (e) { showToast(e.message); }
+}
+
+document.getElementById('saveAllDocRulesBtn').addEventListener('click', async () => {
+  for (let i = 0; i < STATE.docRuleSuggestions.length; i++) {
+    const s = STATE.docRuleSuggestions[i];
+    if (!s._saved && !s._discarded) await saveDocRule(i);
+  }
+  showToast('Saved. Re-checking the sheet…');
+  await rerunAfterRuleChange();
+});
+
 // ---------- issue modal (3 modes: suggest / fix / reupload) ----------
 const MODE_LABELS = { suggest: 'AI suggestion', fix: 'Fix here', reupload: 'Re-upload sheet' };
 
@@ -1003,6 +1273,7 @@ document.getElementById('sendEmailBtn').addEventListener('click', async () => {
   const me = await apiJson('/api/me').catch(() => ({ user: null }));
   if (me.auth_enabled && !me.user) { window.location.href = '/login'; return; }
   await loadPlatforms();
+  await loadCanonicalFields();
   if (STATE.activePlatform) {
     document.getElementById('pageTitle').innerHTML = `Build the <em>${platformName(STATE.activePlatform)} sales register</em>.`;
     await loadRuns();

@@ -577,6 +577,70 @@ async def suggest_rules_from_document(file: UploadFile = File(...), user: str = 
     return suggestions
 
 
+class SuggestFromTextPayload(BaseModel):
+    text: str
+
+
+@app.post("/api/tally-rules/suggest-from-text")
+def suggest_rules_from_text(payload: SuggestFromTextPayload, user: str = Depends(auth.require_login)):
+    """Same contract as /suggest-from-document, for someone who wants to
+    type or paste exceptions/rules directly instead of uploading a file -
+    reuses the same document-scale extraction since pasted text needs no
+    file parsing."""
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(400, "No text provided.")
+    field_keys = [f["key"] for f in tally_pipeline.CANONICAL_FIELDS]
+    try:
+        suggestions = tally_rules.suggest_rules_from_document(text, canonical_fields=field_keys)
+    except Exception as e:
+        raise HTTPException(500, f"AI extraction failed: {e}")
+    return suggestions
+
+
+@app.post("/api/tally-field-mappings/suggest-from-document")
+async def suggest_field_mappings_from_document(file: UploadFile = File(...), platform_slug: str = Form(""), user: str = Depends(auth.require_login)):
+    """AI-assist only - reads a column-mapping spec (e.g. a PRD-style
+    'Tally column | Source sheet | Source column' table exported to
+    .docx/.pdf/.xlsx/.csv/.txt/.md) and proposes TallyFieldMapping rows,
+    both input (file column -> canonical field) and output (canonical
+    field -> sample sheet column). Same contract as the rules-document
+    upload: nothing here is saved until a human reviews each one and
+    calls POST /api/tally-field-mappings themselves."""
+    name = (file.filename or "").lower()
+    if not name.endswith(tally_parsing.DOCUMENT_EXTENSIONS):
+        raise HTTPException(400, f"Unsupported file type for a mapping document. Use one of: {', '.join(tally_parsing.DOCUMENT_EXTENSIONS)}")
+    blob = await file.read()
+    try:
+        text = tally_parsing.extract_document_text(blob, file.content_type, file.filename)
+    except Exception as e:
+        raise HTTPException(400, f"Could not read '{file.filename}': {e}")
+    if not text.strip():
+        raise HTTPException(400, f"No readable text found in '{file.filename}'.")
+    try:
+        return tally_rules.suggest_field_mappings_from_document(text, tally_pipeline.CANONICAL_FIELDS, platform_slug or None)
+    except Exception as e:
+        raise HTTPException(500, f"AI extraction failed: {e}")
+
+
+class SuggestMappingsFromTextPayload(BaseModel):
+    text: str
+    platform_slug: str = ""
+
+
+@app.post("/api/tally-field-mappings/suggest-from-text")
+def suggest_field_mappings_from_text(payload: SuggestMappingsFromTextPayload, user: str = Depends(auth.require_login)):
+    """Same contract as /suggest-from-document, for pasted/typed text
+    instead of an uploaded file."""
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(400, "No text provided.")
+    try:
+        return tally_rules.suggest_field_mappings_from_document(text, tally_pipeline.CANONICAL_FIELDS, payload.platform_slug or None)
+    except Exception as e:
+        raise HTTPException(500, f"AI extraction failed: {e}")
+
+
 # ---------- Field mappings ----------
 
 class MappingPayload(BaseModel):

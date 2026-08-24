@@ -156,6 +156,12 @@
     </div>
 
     <div class="subpanel active" id="subtab-mapping">
+      <div class="continue-row" style="margin-top:0; margin-bottom:16px; justify-content:flex-start;">
+        <button class="btn btn-terracotta btn-sm" id="uploadMappingDocBtn">📄 Upload column mapping</button>
+        <input type="file" id="mappingDocInput" accept=".txt,.md,.docx,.pdf,.xlsx,.xls,.csv" style="display:none" />
+        <button class="btn btn-terracotta btn-sm" id="typeMappingBtn">⌨ Type column mapping</button>
+      </div>
+      <p class="hint" style="margin-top:-10px;">Already have a column-mapping spec — a spreadsheet like "Tally column / Source sheet / Source column", a PRD table, an SOP? Upload or paste it and the AI proposes both the input mapping (file column → field) and the output mapping (field → sample sheet column) from it; you still review and save each one. Anything that's really a business rule (an exception, a lookup) or isn't built yet (batch/FIFO) gets flagged instead of guessed.</p>
       <div class="panel" style="padding:18px; margin-bottom:20px;">
         <h3 style="font-family:var(--sans); font-size:14px; margin:0 0 4px;">Input mapping</h3>
         <p class="hint">Which column in each uploaded file feeds each field the agent uses.</p>
@@ -264,6 +270,37 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="typeMappingModalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Type column mapping</h3>
+      <button class="modal-close" onclick="closeTypeMappingModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="hint">Type or paste the mapping spec — which output column comes from which source column, and any constants. e.g. "Orderid comes from Amazon MTR's Order Id column. Courier is always 'Amazon'." The AI proposes mappings; you still review and save each one.</p>
+      <textarea id="typeMappingText" rows="8" style="width:100%; padding:10px; border:1px solid var(--border); background:var(--bg); font-size:13px;" placeholder="e.g. Orderid <- Amazon MTR: Order Id&#10;Courier = &quot;Amazon&quot; (constant)"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeTypeMappingModal()">Cancel</button>
+      <button class="btn btn-terracotta" id="getTypedMappingSuggestionsBtn">Get suggestions</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="mappingSuggestModalOverlay">
+  <div class="modal" style="max-width:680px;">
+    <div class="modal-header">
+      <h3>Column mappings found</h3>
+      <button class="modal-close" onclick="closeMappingSuggestModal()">✕</button>
+    </div>
+    <div class="modal-body" id="mappingSuggestModalBody" style="max-height:65vh; overflow:auto;"></div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeMappingSuggestModal()">Close</button>
+      <button class="btn btn-terracotta" id="saveAllMappingSuggestionsBtn">Save all remaining</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="newPlatformModalOverlay">
   <div class="modal">
     <div class="modal-header">
@@ -286,7 +323,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const STATE = { runId: null, files: [], mappings: [], rules: [], ledgerKeys: [], ledgerConfig: {}, canonicalFields: [], platforms: [], editingRuleId: null, docRuleSuggestions: [] };
+const STATE = { runId: null, refRuns: [], files: [], mappings: [], rules: [], ledgerKeys: [], ledgerConfig: {}, canonicalFields: [], platforms: [], editingRuleId: null, docRuleSuggestions: [], mappingSuggestions: [], mappingFlagged: [] };
 
 async function apiFetch(url, opts = {}) {
   const res = await fetch(url, opts);
@@ -382,8 +419,13 @@ async function loadRefRuns() {
     opt.textContent = `${r.period_label || ('Run #' + r.id)} — ${r.status}`;
     sel.appendChild(opt);
   });
+  STATE.refRuns = runs;
   STATE.runId = runs[0].id;
   sel.value = STATE.runId;
+}
+function currentRefRunPlatformSlug() {
+  const run = STATE.refRuns.find(r => r.id === STATE.runId);
+  return run ? run.platform_slug : '';
 }
 document.getElementById('refRunSelect').addEventListener('change', async (e) => {
   STATE.runId = parseInt(e.target.value) || null;
@@ -521,15 +563,156 @@ async function renderOutputMapping() {
   container.appendChild(table);
 }
 
+// ---------- column mapping: upload a document or type it ----------
+function fieldLabel(key) {
+  const f = STATE.canonicalFields.find(f => f.key === key);
+  return f ? f.label : key;
+}
+function mappingSuggestionText(m) {
+  const target = fieldLabel(m.target_field) + (m.order_type ? ` (${m.order_type})` : '');
+  const value = m.constant_value ? `= "${m.constant_value}"` : `"${m.source_column_name}"`;
+  if (m.source_file_role === 'sample_tally') return `${target} → sample sheet column ${value}`;
+  const roleLabel = m.source_file_role === 'master' ? 'Master File' : 'sales report';
+  return `${target} ← ${roleLabel} column ${value}`;
+}
+
+async function runSuggestionSourceAndOpen(fetchPromise) {
+  try {
+    const result = await fetchPromise;
+    STATE.mappingSuggestions = (result.mappings || []).map(m => ({ ...m, _saved: false, _discarded: false }));
+    STATE.mappingFlagged = result.flagged || [];
+    if (result.demo) showToast('No ANTHROPIC_API_KEY configured — showing a demo suggestion.');
+    openMappingSuggestModal();
+  } catch (e) { showToast(e.message); }
+}
+
+document.getElementById('uploadMappingDocBtn').addEventListener('click', () => document.getElementById('mappingDocInput').click());
+document.getElementById('mappingDocInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  showToast(`Reading ${file.name}…`);
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('platform_slug', currentRefRunPlatformSlug() || '');
+  await runSuggestionSourceAndOpen((async () => {
+    const res = await apiFetch('/api/tally-field-mappings/suggest-from-document', { method: 'POST', body: fd });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || 'Could not extract a mapping from that document.');
+    return body;
+  })());
+});
+
+document.getElementById('typeMappingBtn').addEventListener('click', () => {
+  document.getElementById('typeMappingText').value = '';
+  document.getElementById('typeMappingModalOverlay').classList.add('open');
+});
+function closeTypeMappingModal() { document.getElementById('typeMappingModalOverlay').classList.remove('open'); }
+document.getElementById('getTypedMappingSuggestionsBtn').addEventListener('click', async () => {
+  const text = document.getElementById('typeMappingText').value.trim();
+  if (!text) return;
+  closeTypeMappingModal();
+  await runSuggestionSourceAndOpen(apiJson('/api/tally-field-mappings/suggest-from-text', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, platform_slug: currentRefRunPlatformSlug() || '' }),
+  }));
+});
+
+function openMappingSuggestModal() {
+  renderMappingSuggestModal();
+  document.getElementById('mappingSuggestModalOverlay').classList.add('open');
+}
+function closeMappingSuggestModal() { document.getElementById('mappingSuggestModalOverlay').classList.remove('open'); }
+
+function renderMappingSuggestModal() {
+  const body = document.getElementById('mappingSuggestModalBody');
+  const pending = STATE.mappingSuggestions.filter(s => !s._saved && !s._discarded);
+  document.getElementById('saveAllMappingSuggestionsBtn').style.display = pending.length ? 'inline-block' : 'none';
+  body.innerHTML = '';
+
+  if (!STATE.mappingSuggestions.length && !STATE.mappingFlagged.length) {
+    body.innerHTML = '<div class="empty-state">Nothing found in that.</div>';
+    return;
+  }
+
+  if (STATE.mappingSuggestions.length) {
+    const h = document.createElement('div');
+    h.className = 'rule-group-title';
+    h.style.marginBottom = '8px';
+    h.textContent = 'Proposed mappings';
+    body.appendChild(h);
+  }
+  STATE.mappingSuggestions.forEach((s, idx) => {
+    if (s._discarded) return;
+    const card = document.createElement('div');
+    card.className = 'rule-card';
+    card.style.alignItems = 'flex-start';
+    const status = s._saved ? '<span class="status-badge status-ok" style="margin-left:8px;">saved</span>' : '';
+    card.innerHTML = `<div>
+        <div class="ai-tag" style="margin-bottom:6px;">AI SUGGESTION — REVIEW BEFORE SAVING</div>
+        <div class="rule-text">${mappingSuggestionText(s)}${status}</div>
+        ${s.description ? `<div class="rule-desc">${s.description}</div>` : ''}
+      </div>
+      <div class="rule-actions">
+        ${s._saved ? '' : `<button data-a="save">Save</button><button data-a="discard">Discard</button>`}
+      </div>`;
+    if (!s._saved) {
+      card.querySelector('[data-a=save]').addEventListener('click', () => saveMappingSuggestion(idx));
+      card.querySelector('[data-a=discard]').addEventListener('click', () => { STATE.mappingSuggestions[idx]._discarded = true; renderMappingSuggestModal(); });
+    }
+    body.appendChild(card);
+  });
+
+  if (STATE.mappingFlagged.length) {
+    const h = document.createElement('div');
+    h.className = 'rule-group-title';
+    h.style.margin = '18px 0 8px';
+    h.textContent = 'Flagged — not mapped, needs a decision';
+    body.appendChild(h);
+    STATE.mappingFlagged.forEach(f => {
+      const card = document.createElement('div');
+      card.className = 'rule-card';
+      card.innerHTML = `<div><div class="rule-text">${f.label}</div><div class="rule-desc">${f.reason}</div></div>`;
+      body.appendChild(card);
+    });
+  }
+}
+
+async function saveMappingSuggestion(idx) {
+  const s = STATE.mappingSuggestions[idx];
+  try {
+    await apiJson('/api/tally-field-mappings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_field: s.target_field, source_file_role: s.source_file_role,
+        platform_slug: s.source_file_role === 'sales' ? (currentRefRunPlatformSlug() || '') : '',
+        order_type: s.order_type || '', source_column_name: s.source_column_name || '', constant_value: s.constant_value || '',
+      }),
+    });
+    STATE.mappingSuggestions[idx]._saved = true;
+    renderMappingSuggestModal();
+    await loadMappingUI();
+  } catch (e) { showToast(e.message); }
+}
+
+document.getElementById('saveAllMappingSuggestionsBtn').addEventListener('click', async () => {
+  for (let i = 0; i < STATE.mappingSuggestions.length; i++) {
+    const s = STATE.mappingSuggestions[i];
+    if (!s._saved && !s._discarded) await saveMappingSuggestion(i);
+  }
+  showToast('Saved.');
+});
+
 // ---------- rules ----------
 const RULE_GROUP_META = {
+  row_filter: 'Row filter — which transactions to include at all (e.g. Transaction Type)',
   escalation: 'Escalation — flag a row for human review',
   tax_split: 'Tax split — CGST+SGST vs IGST',
   voucher_type: 'Voucher type — which Tally voucher type to use',
   ledger_mapping: 'Ledger mapping — which sales ledger to post to',
 };
 const CONDITION_OPERATORS = ['equals', 'not_equals', 'in', 'not_in', 'exists', 'not_exists', 'contains'];
-const ACTION_TYPES = ['set_field', 'escalate', 'split_tax', 'use_ledger', 'use_voucher_type'];
+const ACTION_TYPES = ['set_field', 'escalate', 'split_tax', 'use_ledger', 'use_voucher_type', 'include_row', 'exclude_row'];
 
 async function loadRules() {
   STATE.rules = await apiJson('/api/tally-rules');

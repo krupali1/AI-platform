@@ -338,3 +338,115 @@ Find every distinct rule or condition actually stated or clearly implied in the 
         rule["demo"] = False
         out.append(rule)
     return out
+
+
+MAPPING_PAYLOAD_KEYS = ("target_field", "source_file_role", "order_type", "source_column_name", "constant_value", "description")
+
+# Fields the pipeline itself computes (totals, lookups, internal codes) -
+# there is never a literal source column to map these FROM, only an
+# output ("sample_tally") column to put them IN. Kept as a constant here
+# rather than trusting the model to infer it every time, since getting
+# this wrong would propose a mapping that can never actually be filled.
+_COMPUTED_FIELD_KEYS = {
+    "platform", "order_type", "internal_product_code", "sku_in_master", "taxable_value",
+    "rate", "gst_percent", "cgst_amount", "sgst_amount", "igst_amount", "total_tax",
+    "invoice_total", "voucher_type", "sales_ledger", "party_ledger", "party_name", "narration",
+}
+
+
+def _demo_field_mapping_suggestions():
+    note = "Demo suggestion (no ANTHROPIC_API_KEY configured) - upload a real document and set a key to extract your own mappings. Review before saving."
+    return {
+        "demo": True,
+        "mappings": [
+            {"target_field": "order_id", "source_file_role": "sales", "order_type": "", "source_column_name": "Order Id", "constant_value": "", "description": note},
+            {"target_field": "order_id", "source_file_role": "sample_tally", "order_type": "", "source_column_name": "Orderid", "constant_value": "", "description": note},
+        ],
+        "flagged": [
+            {"label": "Demo mode", "reason": note},
+        ],
+    }
+
+
+def suggest_field_mappings_from_document(document_text, canonical_fields, platform_slug=None):
+    """Calls Claude to read a column-mapping spec (a spreadsheet or doc
+    shaped like 'Tally column | Source sheet | Source column', e.g. a
+    PRD's field table) and propose TallyFieldMapping rows - both the
+    input side (which uploaded file's column feeds a canonical field)
+    and the output side (which canonical field fills which column of
+    the sample Tally sheet). Same "AI only ever proposes" contract as
+    the rule-suggesting functions above: nothing is saved until a human
+    reviews each one and calls the normal mapping-upsert endpoint.
+
+    canonical_fields: the full list of dicts from tally_pipeline.CANONICAL_FIELDS
+    (key/label/group), not just keys - the model needs the labels to
+    match a document's human-readable column names like "Billing_Pincode"
+    to the right canonical key, and the group to know which fields are
+    pipeline-computed (see _COMPUTED_FIELD_KEYS) rather than mappable
+    from a literal source column.
+
+    Deliberately refuses to guess two kinds of things, surfacing them
+    in "flagged" instead: anything that's a conditional/exception/lookup
+    (e.g. "Godown = Warehouse ID, except if Invoice Number starts with
+    IN-") belongs in the Rules feature, not a field mapping; anything
+    this build doesn't implement yet (batch/FIFO allocation columns) has
+    nowhere real to map to."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return _demo_field_mapping_suggestions()
+
+    import anthropic
+
+    truncated = len(document_text) > MAX_DOCUMENT_CHARS
+    text = document_text[:MAX_DOCUMENT_CHARS]
+
+    client = anthropic.Anthropic(api_key=api_key)
+    field_list = "\n".join(f"- {f['key']} ({f['group']}): {f['label']}" for f in (canonical_fields or []))
+    computed_list = ", ".join(sorted(_COMPUTED_FIELD_KEYS))
+    platform_note = f'This is being configured for the platform "{platform_slug}" - use that as the mapping\'s platform for any "sales" role suggestion.' if platform_slug else "No specific platform was given - propose \"sales\" mappings without worrying about which platform, the human will assign it."
+
+    prompt = f"""You are helping configure field mapping for a pipeline that turns marketplace sales reports into Tally accounting entries. A field mapping row says either:
+(a) INPUT: canonical field X is read from column "Y" in an uploaded file of role "sales" (a sales report) or "master" (the SKU/product master file), or is a fixed constant value applied to every row instead of a column, or
+(b) OUTPUT: canonical field X should fill the output column named "Y" of the sample Tally sheet (source_file_role = "sample_tally").
+
+Known canonical fields (key (group): label) - a field in group "computed" is worked out by the pipeline itself (a total, a lookup, an internal formula) and can NEVER be the target of an INPUT mapping (there is no literal column to read it from) - it can only be the target of an OUTPUT ("sample_tally") mapping:
+{field_list}
+
+Computed field keys, for quick reference: {computed_list}
+
+{platform_note}
+
+A user uploaded this column-mapping specification{" (truncated to the first " + str(MAX_DOCUMENT_CHARS) + " characters)" if truncated else ""}:
+\"\"\"{text}\"\"\"
+
+For each row/entry in the document that names an actual output column and where it comes from:
+1. Identify the canonical field key it corresponds to (best match from the list above - skip the entry entirely if nothing reasonably matches).
+2. If the document gives an output column name for it (e.g. a "Tally sheet"/output-column column in a table), propose ONE mapping with source_file_role "sample_tally", source_column_name = that exact output column name, constant_value "".
+3. If the document also states a literal source column feeding it from an uploaded sales report or master file, AND the canonical field is NOT in the computed list above, propose an additional mapping with source_file_role "sales" or "master" as appropriate, source_column_name = that exact source column name, constant_value "". If the document states the source column differs by order type (e.g. "Bill to X" for B2B vs "Ship to X" for B2C), propose one such mapping per order type (order_type = "B2B", "B2C", etc.) instead of one general one.
+4. If the document says a field is always a fixed literal value rather than read from any column (e.g. "Courier = 'Amazon' by default"), propose a mapping with constant_value set to that literal and source_column_name "" instead - for BOTH the sample_tally output mapping and, if source_file_role sales/master would otherwise apply, that too.
+5. Do NOT propose an input (sales/master) mapping for anything in the computed list, even if the document shows a formula for it (e.g. "RATE = Tax exclusive gross / Quantity") - a sample_tally output mapping for it is still correct and expected.
+6. Do NOT invent a mapping for anything that is actually a conditional override, exception, or a lookup-table depending on another field's value (e.g. "if Invoice Number starts with IN-, Warehouse ID = IN", "Party Name depends on Godown's value") - these are business rules, not column mappings. Instead add ONE entry to "flagged" per such case with a short label and a one-sentence reason explaining it belongs in the rules feature instead.
+7. Do NOT invent a mapping for anything this system doesn't have a place for yet - specifically batch numbers, manufacturing dates, or expiry dates (FIFO batch allocation). Add these to "flagged" instead, noting they aren't built yet.
+8. Never invent a source or output column name that isn't actually stated in the document.
+
+Respond with ONLY a JSON object with exactly two keys:
+"mappings": a JSON array of objects, each with exactly these keys: target_field, source_file_role, order_type (empty string "" if not order-type-specific), source_column_name (empty string "" if using constant_value instead), constant_value (empty string "" if using source_column_name instead), description (a short plain-English label quoting or closely paraphrasing the source).
+"flagged": a JSON array of objects, each with exactly these keys: label, reason.
+No other text."""
+
+    resp = client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=4000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    parsed = json.loads(_strip_json_fences(resp.content[0].text))
+    if not isinstance(parsed, dict) or "mappings" not in parsed:
+        raise ValueError("Expected a JSON object with a 'mappings' key from the model")
+    mappings = []
+    for item in parsed.get("mappings") or []:
+        m = {k: (item.get(k) or "") for k in MAPPING_PAYLOAD_KEYS}
+        mappings.append(m)
+    flagged = []
+    for item in parsed.get("flagged") or []:
+        flagged.append({"label": item.get("label") or "", "reason": item.get("reason") or ""})
+    return {"demo": False, "mappings": mappings, "flagged": flagged}
