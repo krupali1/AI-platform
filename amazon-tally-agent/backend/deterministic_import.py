@@ -99,16 +99,26 @@ def _extract_order_type_branches(text):
 
 
 # A formula like "= Tax exclusive gross x Cgst Rate" names its own
-# ingredient columns inline. Some ingredients are themselves already
-# computed by the pipeline (gross/taxable value) - nothing to map
-# there - but others (the rate columns, Quantity) are genuine literal
-# columns from the sales report that this parser would otherwise have
-# no way to discover, since they never appear as a "Tally sheet" row
-# of their own in a PRD-style spec (only the computed totals do).
+# ingredient columns inline - all genuine literal columns from the
+# sales report that this parser would otherwise have no way to
+# discover, since they never appear as a "Tally sheet" row of their
+# own in a PRD-style spec (only the computed totals do).
+#
+# "Tax exclusive gross" is NOT the same thing as the pipeline's
+# already-computed taxable_value (taxable_value = gross_amount -
+# discount) - it's Amazon's raw per-line gross figure, a literal MTR
+# column ("Tax Exclusive Gross") that must be mapped to gross_amount
+# for taxable_value to be anything but zero. Treating it as
+# "already computed, skip" was a real bug: it silently left
+# gross_amount unmapped, so taxable_value computed to 0 and every
+# CGST/SGST/IGST amount multiplied out to 0 regardless of correct
+# rates - confirmed against a real upload showing exactly that
+# (correct gst_percent per row, but every tax amount 0).
 _FORMULA_OPERAND_ALIASES = {
     "cgstrate": "cgst_rate", "sgstrate": "sgst_rate",
     "igstrate": "igst_rate", "utgstrate": "utgst_rate",
     "quantity": "quantity", "qty": "quantity",
+    "taxexclusivegross": "gross_amount", "grossamount": "gross_amount",
 }
 
 
