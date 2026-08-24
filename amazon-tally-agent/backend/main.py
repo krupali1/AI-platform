@@ -28,9 +28,10 @@ import tally_rules
 import tally_pipeline
 import tally_output
 import emailer
+import deterministic_import
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
-ALLOWED_FILE_ROLES = {"sales", "master", "sample_tally", "column_mapping", "other"}
+ALLOWED_FILE_ROLES = {"sales", "master", "sample_tally", "column_mapping", "rules_sheet", "other"}
 
 # Seeded once on first startup (see _ensure_builtin_platforms) - a starting
 # point, not a special case. A user can rename nothing about these, but can
@@ -354,6 +355,54 @@ def delete_platform(platform_id: int, user: str = Depends(auth.require_login)):
 
 # ---------- File uploads ----------
 
+def _upsert_field_mapping(session, target_field, source_file_role, platform_slug, order_type, source_column_name, constant_value):
+    """Same upsert-by-(target_field, source_file_role, platform_slug,
+    order_type) key as POST /api/tally-field-mappings below, used by the
+    deterministic column-mapping import so re-uploading a corrected
+    sheet updates the same rows instead of accumulating duplicates.
+    Doesn't set source_sheet_name (the spec sheet's own rows don't
+    reference one) - the manual endpoint keeps that separately."""
+    platform_slug = platform_slug or None
+    order_type = order_type or None
+    existing = session.query(TallyFieldMapping).filter_by(
+        target_field=target_field, source_file_role=source_file_role,
+        platform_slug=platform_slug, order_type=order_type,
+    ).first()
+    if existing:
+        existing.source_column_name = source_column_name or None
+        existing.constant_value = constant_value or None
+    else:
+        session.add(TallyFieldMapping(
+            target_field=target_field, source_file_role=source_file_role,
+            platform_slug=platform_slug, order_type=order_type,
+            source_column_name=source_column_name or None, constant_value=constant_value or None,
+        ))
+
+
+def _upsert_rule(session, user, rule_group, condition_field, condition_operator, condition_value, action_type, action_field, action_value, description):
+    """Dedups on the condition+action shape (everything but order_index/
+    is_active/description) so re-uploading a corrected rules sheet
+    updates the matching rule in place rather than piling up duplicates
+    every time."""
+    existing = session.query(TallyRule).filter_by(
+        rule_group=rule_group, condition_field=condition_field, condition_operator=condition_operator,
+        condition_value=condition_value or "", action_type=action_type, action_field=action_field or "",
+    ).first()
+    if existing:
+        existing.action_value = action_value or ""
+        if description:
+            existing.description = description
+        existing.updated_at = datetime.datetime.utcnow()
+    else:
+        order_index = session.query(TallyRule).filter_by(rule_group=rule_group).count()
+        session.add(TallyRule(
+            rule_group=rule_group, order_index=order_index, condition_field=condition_field,
+            condition_operator=condition_operator, condition_value=condition_value or "",
+            action_type=action_type, action_field=action_field or "", action_value=action_value or "",
+            is_active=True, description=description, created_by=user,
+        ))
+
+
 @app.post("/api/tally-runs/{run_id}/files")
 async def upload_file(run_id: int, file: UploadFile = File(...), file_role: str = Form(...),
                        order_type: str = Form(""), label: str = Form(""), user: str = Depends(auth.require_login)):
@@ -387,9 +436,28 @@ async def upload_file(run_id: int, file: UploadFile = File(...), file_role: str 
         file_blob=blob, size_bytes=len(blob), sheet_names=sheet_names, uploaded_by=user,
     )
     session.add(record)
+
+    # Column Mapping Sheet and Rules Sheet are applied deterministically
+    # the moment they're uploaded - no AI, no review step, no demo mode,
+    # matching what a real re-uploaded sheet is for: your own ground
+    # truth, applied as-is. Anything the parser doesn't recognize is
+    # reported back in "import_summary" rather than silently dropped.
+    import_summary = None
+    if file_role == "column_mapping":
+        result = deterministic_import.parse_column_mapping_sheet(parsed)
+        for m in result["mappings"]:
+            _upsert_field_mapping(session, m["target_field"], m["source_file_role"], platform_slug=run.platform_slug, order_type=m["order_type"], source_column_name=m["source_column_name"], constant_value=m["constant_value"])
+        import_summary = {"applied": len(result["mappings"]), "flagged": result["flagged"]}
+    elif file_role == "rules_sheet":
+        result = deterministic_import.parse_rules_sheet(parsed)
+        for r in result["rules"]:
+            _upsert_rule(session, user, r["rule_group"], r["condition_field"], r["condition_operator"], r["condition_value"], r["action_type"], r["action_field"], r["action_value"], r["description"])
+        import_summary = {"applied": len(result["rules"]), "flagged": result["flagged"]}
+
     session.commit()
     session.refresh(record)
     out = _file_out(record)
+    out["import_summary"] = import_summary
     session.close()
     return out
 
