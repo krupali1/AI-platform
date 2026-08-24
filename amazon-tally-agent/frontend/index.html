@@ -277,9 +277,9 @@
           </div>
           <div class="upload-card">
             <h3>Column Mapping Sheet <span class="optional-badge">optional</span></h3>
-            <p class="hint">Which source column feeds which Tally column — upload a spec (like a PRD table) or type it. Separate from the Master File above, which maps SKUs to product codes.</p>
-            <div class="dropzone" id="dz-mappingdoc">Drag a file here or <span class="browse">browse</span></div>
-            <button class="btn btn-outline btn-sm" id="typeMappingBtn" style="margin-top:8px; width:100%;">⌨ Type instead</button>
+            <p class="hint">Your own reference — which source column feeds which Tally column (like the PRD table). Stored alongside your other input sheets for whoever sets up Field Mapping in /admin. Separate from the Master File above, which maps SKUs to product codes.</p>
+            <div class="dropzone" id="dz-column_mapping">Drag a file here or <span class="browse">browse</span></div>
+            <div id="files-column_mapping"></div>
           </div>
         </div>
 
@@ -489,39 +489,6 @@
   </div>
 </div>
 
-<!-- Type column mapping -->
-<div class="modal-overlay" id="typeMappingModalOverlay">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>Type column mapping</h3>
-      <button class="modal-close" onclick="closeTypeMappingModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <p class="hint">Type or paste the mapping spec — which output column comes from which source column, and any constants. e.g. "Orderid comes from Amazon MTR's Order Id column. Courier is always 'Amazon'." The AI proposes mappings; you still review and save each one.</p>
-      <textarea id="typeMappingText" rows="8" style="width:100%; padding:10px; border:1px solid var(--border); background:var(--bg); font-size:13px;" placeholder="e.g. Orderid <- Amazon MTR: Order Id&#10;Courier = &quot;Amazon&quot; (constant)"></textarea>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeTypeMappingModal()">Cancel</button>
-      <button class="btn btn-terracotta" id="getTypedMappingSuggestionsBtn">Get suggestions</button>
-    </div>
-  </div>
-</div>
-
-<!-- Column mappings found (from upload or typed text) -->
-<div class="modal-overlay" id="mappingSuggestModalOverlay">
-  <div class="modal" style="max-width:680px;">
-    <div class="modal-header">
-      <h3>Column mappings found</h3>
-      <button class="modal-close" onclick="closeMappingSuggestModal()">✕</button>
-    </div>
-    <div class="modal-body" id="mappingSuggestModalBody" style="max-height:65vh; overflow:auto;"></div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeMappingSuggestModal()">Close</button>
-      <button class="btn btn-terracotta" id="saveAllMappingSuggestionsBtn">Save all remaining</button>
-    </div>
-  </div>
-</div>
-
 <!-- New platform modal -->
 <div class="modal-overlay" id="newPlatformModalOverlay">
   <div class="modal">
@@ -575,7 +542,7 @@ const STATE = {
   files: [], inputIssues: [], slices: { order_types: [], locations: [] },
   generation: null, generations: [], finalIssues: [], activeIssue: null,
   eventPollTimer: null, statusPollTimer: null,
-  canonicalFields: [], editingRuleId: null, docRuleSuggestions: [], mappingSuggestions: [], mappingFlagged: [],
+  canonicalFields: [], editingRuleId: null, docRuleSuggestions: [],
 };
 
 const RULE_GROUP_META = {
@@ -764,7 +731,7 @@ async function removeFile(fileId) {
   await refreshRun();
 }
 
-['master', 'sample_tally'].forEach(role => {
+['master', 'sample_tally', 'column_mapping'].forEach(role => {
   const dz = document.getElementById('dz-' + role);
   const input = document.createElement('input');
   input.type = 'file'; input.style.display = 'none';
@@ -820,7 +787,7 @@ function renderStepper() {
 }
 
 function renderFiles() {
-  ['master', 'sample_tally'].forEach(role => {
+  ['master', 'sample_tally', 'column_mapping'].forEach(role => {
     const container = document.getElementById('files-' + role);
     container.innerHTML = '';
     STATE.files.filter(f => f.file_role === role).forEach(f => {
@@ -1137,140 +1104,6 @@ document.getElementById('getTypedSuggestionsBtn').addEventListener('click', asyn
   await handleTypedRulesText(text);
 });
 
-// ---------- column mapping: upload a document or type it (Step 1) ----------
-function fieldLabel(key) {
-  const f = STATE.canonicalFields.find(f => f.key === key);
-  return f ? f.label : key;
-}
-function mappingSuggestionText(m) {
-  const target = fieldLabel(m.target_field) + (m.order_type ? ` (${m.order_type})` : '');
-  const value = m.constant_value ? `= "${m.constant_value}"` : `"${m.source_column_name}"`;
-  if (m.source_file_role === 'sample_tally') return `${target} → sample sheet column ${value}`;
-  const roleLabel = m.source_file_role === 'master' ? 'Master File' : 'sales report';
-  return `${target} ← ${roleLabel} column ${value}`;
-}
-async function handleMappingDocFile(file) {
-  showToast(`Reading ${file.name}…`);
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('platform_slug', STATE.activePlatform || '');
-  try {
-    const res = await apiFetch('/api/tally-field-mappings/suggest-from-document', { method: 'POST', body: fd });
-    const result = await res.json();
-    if (!res.ok) throw new Error(result.detail || 'Could not extract a mapping from that document.');
-    STATE.mappingSuggestions = (result.mappings || []).map(m => ({ ...m, _saved: false, _discarded: false }));
-    STATE.mappingFlagged = result.flagged || [];
-    if (result.demo) showToast('No ANTHROPIC_API_KEY configured — showing a demo suggestion.');
-    openMappingSuggestModal();
-  } catch (err) { showToast(err.message); }
-}
-async function handleTypedMappingText(text) {
-  try {
-    const result = await apiJson('/api/tally-field-mappings/suggest-from-text', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, platform_slug: STATE.activePlatform || '' }),
-    });
-    STATE.mappingSuggestions = (result.mappings || []).map(m => ({ ...m, _saved: false, _discarded: false }));
-    STATE.mappingFlagged = result.flagged || [];
-    if (result.demo) showToast('No ANTHROPIC_API_KEY configured — showing a demo suggestion.');
-    openMappingSuggestModal();
-  } catch (e) { showToast(e.message); }
-}
-setupTransientDropzone('dz-mappingdoc', DOC_ACCEPT, handleMappingDocFile);
-document.getElementById('typeMappingBtn').addEventListener('click', () => {
-  document.getElementById('typeMappingText').value = '';
-  document.getElementById('typeMappingModalOverlay').classList.add('open');
-});
-function closeTypeMappingModal() { document.getElementById('typeMappingModalOverlay').classList.remove('open'); }
-document.getElementById('getTypedMappingSuggestionsBtn').addEventListener('click', async () => {
-  const text = document.getElementById('typeMappingText').value.trim();
-  if (!text) return;
-  document.getElementById('typeMappingModalOverlay').classList.remove('open');
-  await handleTypedMappingText(text);
-});
-
-function openMappingSuggestModal() {
-  renderMappingSuggestModal();
-  document.getElementById('mappingSuggestModalOverlay').classList.add('open');
-}
-function closeMappingSuggestModal() { document.getElementById('mappingSuggestModalOverlay').classList.remove('open'); }
-
-function renderMappingSuggestModal() {
-  const body = document.getElementById('mappingSuggestModalBody');
-  const pending = STATE.mappingSuggestions.filter(s => !s._saved && !s._discarded);
-  document.getElementById('saveAllMappingSuggestionsBtn').style.display = pending.length ? 'inline-block' : 'none';
-  body.innerHTML = '';
-
-  if (!STATE.mappingSuggestions.length && !STATE.mappingFlagged.length) {
-    body.innerHTML = '<div class="empty-state">Nothing found in that.</div>';
-    return;
-  }
-  if (STATE.mappingSuggestions.length) {
-    const h = document.createElement('div');
-    h.className = 'rule-group-title';
-    h.style.marginBottom = '8px';
-    h.textContent = 'Proposed mappings';
-    body.appendChild(h);
-  }
-  STATE.mappingSuggestions.forEach((s, idx) => {
-    if (s._discarded) return;
-    const card = document.createElement('div');
-    card.className = 'rule-card';
-    const status = s._saved ? '<span class="status-badge status-ok" style="margin-left:8px;">saved</span>' : '';
-    card.innerHTML = `<div>
-        <div class="ai-tag" style="margin-bottom:6px;">AI SUGGESTION — REVIEW BEFORE SAVING</div>
-        <div class="rule-text">${mappingSuggestionText(s)}${status}</div>
-        ${s.description ? `<div class="rule-desc">${s.description}</div>` : ''}
-      </div>
-      <div class="rule-actions">
-        ${s._saved ? '' : `<button data-a="save">Save</button><button data-a="discard">Discard</button>`}
-      </div>`;
-    if (!s._saved) {
-      card.querySelector('[data-a=save]').addEventListener('click', () => saveMappingSuggestion(idx));
-      card.querySelector('[data-a=discard]').addEventListener('click', () => { STATE.mappingSuggestions[idx]._discarded = true; renderMappingSuggestModal(); });
-    }
-    body.appendChild(card);
-  });
-
-  if (STATE.mappingFlagged.length) {
-    const h = document.createElement('div');
-    h.className = 'rule-group-title';
-    h.style.margin = '18px 0 8px';
-    h.textContent = 'Flagged — not mapped, needs a decision';
-    body.appendChild(h);
-    STATE.mappingFlagged.forEach(f => {
-      const card = document.createElement('div');
-      card.className = 'rule-card';
-      card.innerHTML = `<div><div class="rule-text">${f.label}</div><div class="rule-desc">${f.reason}</div></div>`;
-      body.appendChild(card);
-    });
-  }
-}
-
-async function saveMappingSuggestion(idx) {
-  const s = STATE.mappingSuggestions[idx];
-  try {
-    await apiJson('/api/tally-field-mappings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        target_field: s.target_field, source_file_role: s.source_file_role,
-        platform_slug: s.source_file_role === 'sales' ? (STATE.activePlatform || '') : '',
-        order_type: s.order_type || '', source_column_name: s.source_column_name || '', constant_value: s.constant_value || '',
-      }),
-    });
-    STATE.mappingSuggestions[idx]._saved = true;
-    renderMappingSuggestModal();
-  } catch (e) { showToast(e.message); }
-}
-
-document.getElementById('saveAllMappingSuggestionsBtn').addEventListener('click', async () => {
-  for (let i = 0; i < STATE.mappingSuggestions.length; i++) {
-    const s = STATE.mappingSuggestions[i];
-    if (!s._saved && !s._discarded) await saveMappingSuggestion(i);
-  }
-  showToast('Saved. Re-checking the sheet…');
-  await rerunAfterRuleChange();
-});
 
 function openDocRulesModal() {
   renderDocRulesModal();

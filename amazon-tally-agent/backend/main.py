@@ -30,7 +30,7 @@ import tally_output
 import emailer
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
-ALLOWED_FILE_ROLES = {"sales", "master", "sample_tally", "other"}
+ALLOWED_FILE_ROLES = {"sales", "master", "sample_tally", "column_mapping", "other"}
 
 # Seeded once on first startup (see _ensure_builtin_platforms) - a starting
 # point, not a special case. A user can rename nothing about these, but can
