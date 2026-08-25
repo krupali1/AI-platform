@@ -94,24 +94,34 @@ def build_batch_queue(parsed, sheet_name, product_column, location_column, batch
     oldest MFG date first - the PRD's own FIFO example ("Batch 1 was
     created before Batch 2") ties "created before" to manufacture date,
     since the file has no separate creation-date column. A row with a
-    blank product/location/batch/qty is skipped rather than guessed
-    into a queue entry; a blank MFG date sorts last (treated as
-    "unknown recency", never assumed oldest) rather than crashing the
-    sort or silently being treated as the newest/oldest batch."""
+    blank product/batch/qty is skipped rather than guessed into a
+    queue entry; a blank MFG date sorts last (treated as "unknown
+    recency", never assumed oldest) rather than crashing the sort or
+    silently being treated as the newest/oldest batch.
+
+    location_column is optional - the PRD's own description of this
+    logic ("the stock is picked in a FIFO manner") never scopes it by
+    location, only by product, so a Batch wise Summary file with no
+    location/warehouse column still allocates correctly: every batch
+    for a product pools into one queue keyed by (product, ""). When a
+    location column IS mapped, matching is scoped to (product,
+    location) instead, for a file that does track batches per
+    warehouse."""
     if sheet_name not in parsed:
         return {}
     df = parsed[sheet_name]
-    required = (product_column, location_column, batch_column, qty_column)
+    required = (product_column, batch_column, qty_column)
     if any(c not in df.columns for c in required):
         return {}
+    has_location = location_column and location_column in df.columns
     has_mfg = mfg_column and mfg_column in df.columns
     has_exp = exp_column and exp_column in df.columns
     queues = {}
     for _, row in df.iterrows():
         product = str(row[product_column]).strip()
-        location = str(row[location_column]).strip()
+        location = str(row[location_column]).strip() if has_location else ""
         batch_no = str(row[batch_column]).strip()
-        if not product or not location or not batch_no:
+        if not product or not batch_no or (has_location and not location):
             continue
         try:
             qty = float(str(row[qty_column]).strip())

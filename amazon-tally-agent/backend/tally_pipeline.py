@@ -279,16 +279,25 @@ def _build_master_map(files, mappings_index, ledger_config=None):
 
 
 def _build_batch_queues(files, mappings_index):
-    """{(internal_product_code, godown): [{batch_no, qty, mfg_date,
-    exp_date}, ...]}, oldest MFG date first - from every uploaded
-    Batch wise Summary file. Returns {} if none was uploaded, or if
-    its own column mapping (batch_product_column etc.) isn't
-    configured yet - batch allocation is entirely optional, never
-    required to build a sheet, matching the PRD's own open question
-    ("Upload the batch wise summary every month?")."""
+    """({(internal_product_code, location): [{batch_no, qty, mfg_date,
+    exp_date}, ...]}, location_aware) - oldest MFG date first - from
+    every uploaded Batch wise Summary file. Returns ({}, False) if none
+    was uploaded, or if its own column mapping (batch_product_column
+    etc.) isn't configured yet - batch allocation is entirely optional,
+    never required to build a sheet, matching the PRD's own open
+    question ("Upload the batch wise summary every month?").
+
+    batch_location_column is optional, not required alongside product/
+    batch/qty: the PRD's own description of this logic never scopes
+    FIFO by location, only by product ("the stock is picked in a FIFO
+    manner"), so a Batch wise Summary file with no location/warehouse
+    column of its own still allocates correctly, pooling every batch
+    for a product into one FIFO queue. location_aware tells the caller
+    which key shape to look rows up with - (product, godown) when a
+    location column is mapped, (product, "") when it isn't."""
     batch_files = [f for f in files if f.file_role == BATCH_FILE_ROLE]
     if not batch_files:
-        return {}
+        return {}, False
     batch_mappings = mappings_index.get((BATCH_FILE_ROLE, None, None), [])
     product_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_product_column"), None)
     location_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_location_column"), None)
@@ -296,8 +305,9 @@ def _build_batch_queues(files, mappings_index):
     qty_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_qty_column"), None)
     mfg_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_mfg_date_column"), None)
     exp_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_exp_date_column"), None)
-    if not (product_col and location_col and batch_col and qty_col):
-        return {}
+    if not (product_col and batch_col and qty_col):
+        return {}, False
+    location_aware = bool(location_col)
     combined = {}
     for f in batch_files:
         parsed = _parse_file(f)
@@ -310,7 +320,7 @@ def _build_batch_queues(files, mappings_index):
             combined.setdefault(key, []).extend(batches)
     for batches in combined.values():
         batches.sort(key=lambda b: (b["mfg_date"] == "", b["mfg_date"]))
-    return combined
+    return combined, location_aware
 
 
 def _allocate_batch_fifo(queues, product_code, location, quantity):
@@ -348,10 +358,17 @@ def _allocate_batch_fifo(queues, product_code, location, quantity):
     return allocations
 
 
-def apply_batch_allocation(rows, batch_queues):
+def apply_batch_allocation(rows, batch_queues, location_aware=False):
     """Runs after SKU/combo resolution, so internal_product_code,
     godown, and quantity are all final. No-op (returns rows unchanged)
     if no batch data was uploaded/configured at all.
+
+    location_aware mirrors the flag _build_batch_queues returned: when
+    the Batch wise Summary file has its own location/warehouse column
+    mapped, allocation is scoped per (product, godown); when it
+    doesn't, every batch for a product is pooled into one FIFO queue
+    regardless of godown, since the PRD's own description of this
+    logic never scopes it by location.
 
     A sale that spans more than one batch fans out into one row per
     batch consumed - same source_row_ref suffix convention as combo
@@ -372,12 +389,12 @@ def apply_batch_allocation(rows, batch_queues):
     new_rows = []
     for platform_slug, ref, fields in rows:
         product = str(fields.get("internal_product_code") or "").strip()
-        location = str(fields.get("godown") or "").strip()
+        location = str(fields.get("godown") or "").strip() if location_aware else ""
         try:
             qty = float(fields.get("quantity") or 0)
         except (TypeError, ValueError):
             qty = 0.0
-        if not product or not location or qty <= 0:
+        if not product or (location_aware and not location) or qty <= 0:
             new_rows.append((platform_slug, ref, fields))
             continue
 
@@ -796,7 +813,7 @@ def generate_output(session, run, generation):
         ledger_config = _ledger_config_dict(session)
         sku_map = _build_master_map(files, mappings_index, ledger_config)
         sku_map.update(_manual_sku_overrides(session, run))
-        batch_queues = _build_batch_queues(files, mappings_index)
+        batch_queues, batch_location_aware = _build_batch_queues(files, mappings_index)
         rows = resolve_field_mapping(files, parsed_by_file, mappings_index, platforms_by_slug)
         _log_generation(session, generation, "info", f"Read the uploaded reports - {len(rows)} row(s) mapped")
 
@@ -835,7 +852,7 @@ def generate_output(session, run, generation):
 
         if batch_queues:
             before_batch = len(rows)
-            rows = apply_batch_allocation(rows, batch_queues)
+            rows = apply_batch_allocation(rows, batch_queues, batch_location_aware)
             split_count = len(rows) - before_batch
             _log_generation(session, generation, "info",
                 f"Allocated Batch No. / MFG / EXP dates FIFO from the Batch Summary"
