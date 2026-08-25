@@ -451,17 +451,33 @@ async function fileColumns(fileId, sheet) {
   return apiJson(`/api/tally-runs/${STATE.runId}/files/${fileId}/columns${q}`);
 }
 
+// Mirrors the backend's _sales_mappings_for() fallback exactly: an
+// order-type-specific mapping (e.g. saved for "B2B") overrides a
+// general one (saved with no order type, applying to every order
+// type) only for that field - so a general mapping must still show
+// as "selected" here even when viewing a specific order type's
+// table, or a mapping that's genuinely live and working looks blank
+// and unconfigured, which is exactly the confusion this caused.
+function findExistingMapping(field, role, platformSlug, orderType) {
+  const specific = orderType && STATE.mappings.find(m => m.target_field === field.key && m.source_file_role === role
+    && (m.platform_slug || null) === (platformSlug || null) && m.order_type === orderType);
+  if (specific) return { mapping: specific, isGeneral: false };
+  const general = STATE.mappings.find(m => m.target_field === field.key && m.source_file_role === role
+    && (m.platform_slug || null) === (platformSlug || null) && !m.order_type);
+  return general ? { mapping: general, isGeneral: true } : null;
+}
+
 async function renderOneMappingTable(container, title, file, relevantFields, role, platformSlug, orderType) {
   const cols = await fileColumns(file.id);
   const table = document.createElement('table');
   table.innerHTML = `<thead><tr><th>${title} — ${file.original_filename}</th><th>Column</th><th>...or a constant value</th></tr></thead>`;
   const tbody = document.createElement('tbody');
   relevantFields.forEach(field => {
-    const existing = STATE.mappings.find(m => m.target_field === field.key && m.source_file_role === role
-      && (m.platform_slug || null) === (platformSlug || null) && (m.order_type || null) === (orderType || null));
+    const found = findExistingMapping(field, role, platformSlug, orderType);
+    const existing = found ? found.mapping : null;
     const tr = document.createElement('tr');
     const tdLabel = document.createElement('td');
-    tdLabel.textContent = field.label;
+    tdLabel.innerHTML = field.label + (found && found.isGeneral ? ' <span class="hint" style="font-size:10px;">(applies to all order types)</span>' : '');
 
     const save = (colValue, constValue) => apiJson('/api/tally-field-mappings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -511,6 +527,7 @@ async function renderInputMapping() {
   container.innerHTML = '';
   const sourceFields = STATE.canonicalFields.filter(f => f.group === 'source');
   const masterFields = STATE.canonicalFields.filter(f => f.group === 'master');
+  const batchFields = STATE.canonicalFields.filter(f => f.group === 'batch');
 
   const salesFiles = STATE.files.filter(f => f.file_role === 'sales');
   const pairs = [...new Set(salesFiles.map(f => `${f.platform_slug}::${f.order_type || ''}`))];
@@ -524,6 +541,9 @@ async function renderInputMapping() {
   const masterFile = STATE.files.filter(f => f.file_role === 'master').slice(-1)[0];
   if (masterFile) await renderOneMappingTable(container, 'Master File', masterFile, masterFields, 'master', null, null);
 
+  const batchFile = STATE.files.filter(f => f.file_role === 'batch_summary').slice(-1)[0];
+  if (batchFile) await renderOneMappingTable(container, 'Batch wise Summary', batchFile, batchFields, 'batch_summary', null, null);
+
   if (!container.children.length) container.innerHTML = '<div class="empty-state">Pick a reference run above that has sales reports and a Master file uploaded.</div>';
 }
 
@@ -533,7 +553,7 @@ async function renderOutputMapping() {
   const sampleFile = STATE.files.filter(f => f.file_role === 'sample_tally').slice(-1)[0];
   if (!sampleFile) { container.innerHTML = '<div class="empty-state">Pick a reference run above that has a sample Tally sheet uploaded.</div>'; return; }
   const cols = await fileColumns(sampleFile.id);
-  const mappable = STATE.canonicalFields.filter(f => f.group !== 'master');
+  const mappable = STATE.canonicalFields.filter(f => f.group !== 'master' && f.group !== 'batch');
   const table = document.createElement('table');
   table.innerHTML = '<thead><tr><th>Sample column</th><th>Fill with field</th></tr></thead>';
   const tbody = document.createElement('tbody');

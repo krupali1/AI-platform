@@ -31,7 +31,7 @@ import emailer
 import deterministic_import
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
-ALLOWED_FILE_ROLES = {"sales", "master", "sample_tally", "column_mapping", "rules_sheet", "other"}
+ALLOWED_FILE_ROLES = {"sales", "master", "sample_tally", "column_mapping", "rules_sheet", "batch_summary", "other"}
 
 # Seeded once on first startup (see _ensure_builtin_platforms) - a starting
 # point, not a special case. A user can rename nothing about these, but can
@@ -206,6 +206,8 @@ def _review_item_out(i):
         "rule_id": i.rule_id, "rule_name": i.rule_name, "trigger_reason": i.trigger_reason,
         "status": i.status, "resolution_mode": i.resolution_mode,
         "answer_value": i.answer_value,
+        "answered_by": i.answered_by,
+        "answered_at": i.answered_at.isoformat() if i.answered_at else None,
         "created_at": i.created_at.isoformat() if i.created_at else None,
     }
 
@@ -971,7 +973,7 @@ def apply_fix(item_id: int, payload: FixPayload, user: str = Depends(auth.requir
         session.close()
         raise HTTPException(409, "This item has already been resolved")
     run = session.query(TallyRun).filter_by(id=item.run_id).first()
-    tally_pipeline.apply_review_fix(session, run, item, payload.values)
+    tally_pipeline.apply_review_fix(session, run, item, payload.values, user=user)
     out = _review_item_out(item)
     session.close()
     return out
@@ -988,7 +990,7 @@ def approve_suggestion(item_id: int, user: str = Depends(auth.require_login)):
         session.close()
         raise HTTPException(409, "This item has already been resolved")
     run = session.query(TallyRun).filter_by(id=item.run_id).first()
-    tally_pipeline.approve_review_suggestion(session, run, item)
+    tally_pipeline.approve_review_suggestion(session, run, item, user=user)
     out = _review_item_out(item)
     session.close()
     return out
@@ -1001,7 +1003,7 @@ def reject_suggestion(item_id: int, user: str = Depends(auth.require_login)):
     if not item:
         session.close()
         raise HTTPException(404, "Not found")
-    tally_pipeline.reject_review_suggestion(session, item)
+    tally_pipeline.reject_review_suggestion(session, item, user=user)
     out = _review_item_out(item)
     session.close()
     return out
@@ -1021,7 +1023,7 @@ def defer_review_item(item_id: int, user: str = Depends(auth.require_login)):
         session.close()
         raise HTTPException(409, "This item has already been resolved")
     run = session.query(TallyRun).filter_by(id=item.run_id).first()
-    tally_pipeline.defer_review_item(session, run, item)
+    tally_pipeline.defer_review_item(session, run, item, user=user)
     out = _review_item_out(item)
     session.close()
     return out
@@ -1072,7 +1074,9 @@ async def reupload_for_review_item(item_id: int, file: UploadFile = File(...), u
 
     item.status = "answered"
     item.resolution_mode = "reupload"
+    item.answer_value = json.dumps({"note": f"Re-uploaded '{file.filename}'"})
     item.answered_at = datetime.datetime.utcnow()
+    item.answered_by = user
     session.commit()
 
     try:

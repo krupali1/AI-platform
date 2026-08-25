@@ -31,6 +31,7 @@ import tally_rules
 MAX_ROWS = 20000
 
 SALES_FILE_ROLE = "sales"
+BATCH_FILE_ROLE = "batch_summary"
 
 CANONICAL_FIELDS = [
     {"key": "order_id", "label": "Order ID", "group": "source"},
@@ -64,6 +65,12 @@ CANONICAL_FIELDS = [
     {"key": "master_sku_column", "label": "Master Sheet: SKU / Item Code column", "group": "master"},
     {"key": "master_code_column", "label": "Master Sheet: Internal Product Code column", "group": "master"},
     {"key": "master_qty_multiplier_column", "label": "Master Sheet: Quantity Multiplier column (optional, for combo packs)", "group": "master"},
+    {"key": "batch_product_column", "label": "Batch Summary: Internal Product Code column", "group": "batch"},
+    {"key": "batch_location_column", "label": "Batch Summary: Location / Godown column", "group": "batch"},
+    {"key": "batch_no_column", "label": "Batch Summary: Batch No. column", "group": "batch"},
+    {"key": "batch_qty_column", "label": "Batch Summary: Opening Quantity column", "group": "batch"},
+    {"key": "batch_mfg_date_column", "label": "Batch Summary: MFG Date column (also used for FIFO order - earliest first)", "group": "batch"},
+    {"key": "batch_exp_date_column", "label": "Batch Summary: EXP Date column", "group": "batch"},
     {"key": "platform", "label": "Platform (auto: which marketplace this row came from)", "group": "computed"},
     {"key": "order_type", "label": "Order Type (e.g. B2C / B2B / General, set per upload)", "group": "computed"},
     {"key": "internal_product_code", "label": "Internal Product Code", "group": "computed"},
@@ -81,6 +88,9 @@ CANONICAL_FIELDS = [
     {"key": "party_ledger", "label": "Party Ledger", "group": "computed"},
     {"key": "party_name", "label": "Party Name", "group": "computed"},
     {"key": "narration", "label": "Narration", "group": "computed"},
+    {"key": "batch_no", "label": "Batch No. (FIFO-allocated from the Batch Summary upload)", "group": "computed"},
+    {"key": "mfg_date", "label": "MFG Date (from the allocated batch)", "group": "computed"},
+    {"key": "exp_date", "label": "EXP Date (from the allocated batch)", "group": "computed"},
 ]
 
 # voucher_type/sales_ledger deliberately excluded - not part of the
@@ -266,6 +276,141 @@ def _build_master_map(files, mappings_index, ledger_config=None):
             if component["multiplier"] is None:
                 component["multiplier"] = _extract_sku_multiplier(sku, combo_pattern) or 1.0
     return combined
+
+
+def _build_batch_queues(files, mappings_index):
+    """{(internal_product_code, godown): [{batch_no, qty, mfg_date,
+    exp_date}, ...]}, oldest MFG date first - from every uploaded
+    Batch wise Summary file. Returns {} if none was uploaded, or if
+    its own column mapping (batch_product_column etc.) isn't
+    configured yet - batch allocation is entirely optional, never
+    required to build a sheet, matching the PRD's own open question
+    ("Upload the batch wise summary every month?")."""
+    batch_files = [f for f in files if f.file_role == BATCH_FILE_ROLE]
+    if not batch_files:
+        return {}
+    batch_mappings = mappings_index.get((BATCH_FILE_ROLE, None, None), [])
+    product_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_product_column"), None)
+    location_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_location_column"), None)
+    batch_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_no_column"), None)
+    qty_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_qty_column"), None)
+    mfg_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_mfg_date_column"), None)
+    exp_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_exp_date_column"), None)
+    if not (product_col and location_col and batch_col and qty_col):
+        return {}
+    combined = {}
+    for f in batch_files:
+        parsed = _parse_file(f)
+        names = tally_parsing.sheet_names_of(parsed)
+        if not names:
+            continue
+        sheet = next((m.source_sheet_name for m in batch_mappings if m.source_sheet_name), None) or names[0]
+        queue = tally_parsing.build_batch_queue(parsed, sheet, product_col, location_col, batch_col, qty_col, mfg_col, exp_col)
+        for key, batches in queue.items():
+            combined.setdefault(key, []).extend(batches)
+    for batches in combined.values():
+        batches.sort(key=lambda b: (b["mfg_date"] == "", b["mfg_date"]))
+    return combined
+
+
+def _allocate_batch_fifo(queues, product_code, location, quantity):
+    """Consumes `quantity` units from the oldest batch(es) for
+    (product_code, location), oldest MFG date first, mutating each
+    batch's remaining qty in place so later rows continue where this
+    one left off - FIFO consumption order matters across the whole
+    run, not just within one row. Returns a list of allocations
+    ({batch_no, qty, mfg_date, exp_date}) - more than one entry when a
+    single sale spans more than one batch's remaining stock, exactly
+    the PRD's own worked example (Batch 1: 22 units, Batch 2: 80
+    units, 50 units sold -> 22 from Batch 1, 28 from Batch 2).
+
+    None if there's no batch data at all for this (product, location) -
+    distinct from "found some, but not enough", which instead returns
+    a final entry with batch_no None for the shortfall. Either case is
+    the caller's job to surface as a review item, never to guess a
+    batch or silently short the row's quantity."""
+    key = (product_code, location)
+    if key not in queues:
+        return None
+    remaining = quantity
+    allocations = []
+    for batch in queues[key]:
+        if remaining <= 0:
+            break
+        if batch["qty"] <= 0:
+            continue
+        take = min(remaining, batch["qty"])
+        allocations.append({"batch_no": batch["batch_no"], "qty": take, "mfg_date": batch["mfg_date"], "exp_date": batch["exp_date"]})
+        batch["qty"] -= take
+        remaining -= take
+    if remaining > 0:
+        allocations.append({"batch_no": None, "qty": remaining, "mfg_date": None, "exp_date": None})
+    return allocations
+
+
+def apply_batch_allocation(rows, batch_queues):
+    """Runs after SKU/combo resolution, so internal_product_code,
+    godown, and quantity are all final. No-op (returns rows unchanged)
+    if no batch data was uploaded/configured at all.
+
+    A sale that spans more than one batch fans out into one row per
+    batch consumed - same source_row_ref suffix convention as combo
+    fan-out. gross_amount and discount are scaled proportionally to
+    each split's share of the original quantity: unlike a same-product
+    combo (which redistributes one sale's value only by unit count,
+    Amazon's own gross_amount already covering the full sale), a batch
+    split divides one sale's *existing* quantity across batches, so
+    its existing financial fields must divide the same way or the
+    sale's tax would be counted more than once across the split rows.
+
+    A row tagged "batch_allocation_status" (no_batch_data or
+    insufficient_stock) needed batch data the queues couldn't fully
+    supply - the caller turns that into a review item; batch_no/
+    mfg_date/exp_date are left blank on that row rather than guessed."""
+    if not batch_queues:
+        return rows
+    new_rows = []
+    for platform_slug, ref, fields in rows:
+        product = str(fields.get("internal_product_code") or "").strip()
+        location = str(fields.get("godown") or "").strip()
+        try:
+            qty = float(fields.get("quantity") or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        if not product or not location or qty <= 0:
+            new_rows.append((platform_slug, ref, fields))
+            continue
+
+        allocations = _allocate_batch_fifo(batch_queues, product, location, qty)
+        if allocations is None:
+            fields["batch_allocation_status"] = "no_batch_data"
+            new_rows.append((platform_slug, ref, fields))
+            continue
+
+        if len(allocations) == 1 and allocations[0]["batch_no"] is not None:
+            a = allocations[0]
+            fields["batch_no"] = a["batch_no"]
+            fields["mfg_date"] = a["mfg_date"]
+            fields["exp_date"] = a["exp_date"]
+            new_rows.append((platform_slug, ref, fields))
+            continue
+
+        gross_amount = float(fields.get("gross_amount") or 0)
+        discount = float(fields.get("discount") or 0)
+        for idx, a in enumerate(allocations):
+            row_fields = dict(fields)
+            share = (a["qty"] / qty) if qty else 0
+            row_fields["quantity"] = a["qty"]
+            row_fields["gross_amount"] = round(gross_amount * share, 2)
+            row_fields["discount"] = round(discount * share, 2)
+            if a["batch_no"] is not None:
+                row_fields["batch_no"] = a["batch_no"]
+                row_fields["mfg_date"] = a["mfg_date"]
+                row_fields["exp_date"] = a["exp_date"]
+            else:
+                row_fields["batch_allocation_status"] = "insufficient_stock"
+            new_rows.append((platform_slug, f"{ref}#batch{idx}", row_fields))
+    return new_rows
 
 
 def parse_uploads(session, run):
@@ -651,6 +796,7 @@ def generate_output(session, run, generation):
         ledger_config = _ledger_config_dict(session)
         sku_map = _build_master_map(files, mappings_index, ledger_config)
         sku_map.update(_manual_sku_overrides(session, run))
+        batch_queues = _build_batch_queues(files, mappings_index)
         rows = resolve_field_mapping(files, parsed_by_file, mappings_index, platforms_by_slug)
         _log_generation(session, generation, "info", f"Read the uploaded reports - {len(rows)} row(s) mapped")
 
@@ -687,6 +833,14 @@ def generate_output(session, run, generation):
             f"Resolved SKUs against the Master file and unbundled combo packs"
             + (f" - removed {combo_dupes_removed} duplicate row(s) introduced by the fan-out" if combo_dupes_removed else ""))
 
+        if batch_queues:
+            before_batch = len(rows)
+            rows = apply_batch_allocation(rows, batch_queues)
+            split_count = len(rows) - before_batch
+            _log_generation(session, generation, "info",
+                f"Allocated Batch No. / MFG / EXP dates FIFO from the Batch Summary"
+                + (f" - {split_count} row(s) split across more than one batch" if split_count else ""))
+
         results = apply_conditional_rules(rows, rules, ledger_config)
         _log_generation(session, generation, "info", "Applied configured rules (tax split, voucher type, ledger mapping)")
 
@@ -700,7 +854,7 @@ def generate_output(session, run, generation):
             missing = validate_and_flag(fields)
 
             status = "ok"
-            if fields.get("sku_in_master") == "false":
+            if fields.get("sku_in_master") == "false" or fields.get("batch_allocation_status"):
                 status = "flagged"
             if escalations:
                 status = "escalated"
@@ -714,11 +868,11 @@ def generate_output(session, run, generation):
                 applied_rule_ids=",".join(str(i) for i in applied),
             )
             session.add(row)
-            row_objs.append((row, escalations, missing))
+            row_objs.append((row, escalations, missing, fields))
         session.commit()
         _log_generation(session, generation, "info", "Computed taxable value, GST, and totals for every row")
 
-        for row, escalations, missing in row_objs:
+        for row, escalations, missing, fields in row_objs:
             for esc in escalations:
                 session.add(TallyReviewItem(
                     run_id=run.id, generation_id=generation.id, stage="final",
@@ -753,6 +907,37 @@ def generate_output(session, run, generation):
                     }),
                     trigger_reason="missing_required_field",
                 ))
+            batch_status = fields.get("batch_allocation_status")
+            if batch_status:
+                if batch_status == "no_batch_data":
+                    title = f"No Batch Summary data for \"{fields.get('internal_product_code', '')}\" at \"{fields.get('godown', '')}\""
+                    body = "This product/location combination doesn't appear anywhere in the uploaded Batch Summary. Batch no./MFG/EXP left blank - enter manually if needed."
+                else:
+                    title = f"Batch Summary doesn't cover the full quantity for \"{fields.get('internal_product_code', '')}\" at \"{fields.get('godown', '')}\""
+                    body = f"Batches on file for this product/location ran out before covering all {fields.get('quantity', '')} unit(s) on this row. Batch no./MFG/EXP left blank for the shortfall - enter manually or update the Batch Summary."
+                session.add(TallyReviewItem(
+                    run_id=run.id, generation_id=generation.id, stage="final", severity="warning",
+                    affected_row_ids=str(row.id),
+                    source_label="Tally sheet", location_label=f"Order {row.order_id or ''}",
+                    title=title, body=body,
+                    detail=json.dumps({
+                        "facts": [
+                            {"label": "Order ID", "value": row.order_id or ""},
+                            {"label": "Product", "value": fields.get("internal_product_code", "")},
+                            {"label": "Godown", "value": fields.get("godown", "")},
+                            {"label": "Quantity on this row", "value": str(fields.get("quantity", ""))},
+                        ],
+                        "available_modes": ["fix"],
+                        "default_mode": "fix",
+                        "fix": {"note": "Enter Batch No. / MFG Dt. / EXP Dt. for this row manually, or update the Batch Summary and rebuild.",
+                                "fields": [
+                                    {"key": "batch_no", "label": "Batch No.", "value": ""},
+                                    {"key": "mfg_date", "label": "MFG Date", "value": ""},
+                                    {"key": "exp_date", "label": "EXP Date", "value": ""},
+                                ]},
+                    }),
+                    trigger_reason="batch_" + batch_status,
+                ))
         session.commit()
         _log_generation(session, generation, "info", "Checked every row for missing required fields")
 
@@ -784,7 +969,7 @@ def finalize_run_validation(session, run):
     session.commit()
 
 
-def apply_review_fix(session, run, item, values):
+def apply_review_fix(session, run, item, values, user=None):
     """"Fix here" mode - applies the submitted field values directly.
     For a stage="final" item this rewrites its affected output rows
     (re-evaluating rules/totals for just those rows, never a full
@@ -826,6 +1011,7 @@ def apply_review_fix(session, run, item, values):
     item.resolution_mode = "fix"
     item.answer_value = json.dumps(values)
     item.answered_at = datetime.datetime.utcnow()
+    item.answered_by = user
     session.commit()
 
     if item.stage == "input":
@@ -836,7 +1022,7 @@ def apply_review_fix(session, run, item, values):
             finalize_generation(session, generation)
 
 
-def approve_review_suggestion(session, run, item):
+def approve_review_suggestion(session, run, item, user=None):
     """"AI suggestion" mode - applies detail.suggestion.apply_values if
     the item's suggestion carries one (a structured field:value map a
     future trigger_reason could set alongside its human-readable
@@ -845,7 +1031,7 @@ def approve_review_suggestion(session, run, item):
     detail = json.loads(item.detail or "{}")
     apply_values = ((detail.get("suggestion") or {}).get("apply_values")) or {}
     if apply_values:
-        apply_review_fix(session, run, item, apply_values)
+        apply_review_fix(session, run, item, apply_values, user=user)
         item.resolution_mode = "suggest"
         session.commit()
         return
@@ -853,6 +1039,7 @@ def approve_review_suggestion(session, run, item):
     item.resolution_mode = "suggest"
     item.answer_value = json.dumps((detail.get("suggestion") or {}).get("summary") or "Suggestion approved")
     item.answered_at = datetime.datetime.utcnow()
+    item.answered_by = user
     session.commit()
     if item.stage == "input":
         finalize_run_validation(session, run)
@@ -862,15 +1049,17 @@ def approve_review_suggestion(session, run, item):
             finalize_generation(session, generation)
 
 
-def reject_review_suggestion(session, item):
+def reject_review_suggestion(session, item, user=None):
     """Leaves the item pending - the frontend nudges the person toward
     "Fix here" or "Re-upload sheet" instead, same as the prototype."""
     item.status = "pending"
     item.resolution_mode = None
+    item.answered_by = None
+    item.answered_at = None
     session.commit()
 
 
-def defer_review_item(session, run, item):
+def defer_review_item(session, run, item, user=None):
     """"Decide later" - explicitly acknowledges an exception without
     fixing it. The affected row(s) are left exactly as they are -
     whatever's blank stays blank, row.status is untouched (still
@@ -883,6 +1072,7 @@ def defer_review_item(session, run, item):
     item.resolution_mode = "deferred"
     item.answer_value = json.dumps({"note": "Decided later - left unresolved on purpose"})
     item.answered_at = datetime.datetime.utcnow()
+    item.answered_by = user
     session.commit()
 
     if item.stage == "input":

@@ -20,12 +20,16 @@ COMPUTED_FIELD_KEYS = {
     "platform", "order_type", "internal_product_code", "sku_in_master", "taxable_value",
     "rate", "gst_percent", "cgst_amount", "sgst_amount", "igst_amount", "total_tax",
     "invoice_total", "voucher_type", "sales_ledger", "party_ledger", "party_name", "narration",
+    "batch_no", "mfg_date", "exp_date",
 }
 
 # "Tally sheet" output-column label (normalized) -> canonical field key.
-# Deliberately doesn't cover batch/MFG/EXP columns - FIFO batch
-# allocation isn't built, so those stay unrecognized on purpose and
-# surface in "flagged" rather than pointing anywhere.
+# Batch no/MFG Dt./EXP Dt. are in "computed" above, not because a
+# literal source column feeds them directly (nothing does - they're
+# FIFO-allocated from a separate Batch Summary upload, itself mapped
+# independently in /admin), but so a re-upload of this sheet still
+# wires up their OUTPUT column instead of flagging them "not
+# recognized" the way it did before batch allocation was built.
 _TALLY_COLUMN_ALIASES = {
     "orderid": "order_id",
     "order_date": "order_date", "orderdate": "order_date",
@@ -39,7 +43,10 @@ _TALLY_COLUMN_ALIASES = {
     "invoiceno": "invoice_number", "invoicenumber": "invoice_number",
     "productname": "internal_product_code",
     "godown": "godown",
+    "batchno": "batch_no",
     "hsncode": "hsn_code", "hsnsac": "hsn_code", "hsn/sac": "hsn_code",
+    "mfgdt": "mfg_date", "mfgdate": "mfg_date",
+    "expdt": "exp_date", "expdate": "exp_date",
     "qty": "quantity", "quantity": "quantity",
     "units": "units",
     "rate": "rate",

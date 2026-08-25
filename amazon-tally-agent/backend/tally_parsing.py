@@ -88,6 +88,45 @@ def build_master_sku_map(parsed, sheet_name, sku_column, code_column, multiplier
     return mapping
 
 
+def build_batch_queue(parsed, sheet_name, product_column, location_column, batch_column, qty_column, mfg_column, exp_column):
+    """(internal_product_code, location) -> [{batch_no, qty, mfg_date,
+    exp_date}, ...] from the parsed Batch wise Summary file, sorted
+    oldest MFG date first - the PRD's own FIFO example ("Batch 1 was
+    created before Batch 2") ties "created before" to manufacture date,
+    since the file has no separate creation-date column. A row with a
+    blank product/location/batch/qty is skipped rather than guessed
+    into a queue entry; a blank MFG date sorts last (treated as
+    "unknown recency", never assumed oldest) rather than crashing the
+    sort or silently being treated as the newest/oldest batch."""
+    if sheet_name not in parsed:
+        return {}
+    df = parsed[sheet_name]
+    required = (product_column, location_column, batch_column, qty_column)
+    if any(c not in df.columns for c in required):
+        return {}
+    has_mfg = mfg_column and mfg_column in df.columns
+    has_exp = exp_column and exp_column in df.columns
+    queues = {}
+    for _, row in df.iterrows():
+        product = str(row[product_column]).strip()
+        location = str(row[location_column]).strip()
+        batch_no = str(row[batch_column]).strip()
+        if not product or not location or not batch_no:
+            continue
+        try:
+            qty = float(str(row[qty_column]).strip())
+        except (TypeError, ValueError):
+            continue
+        mfg_date = str(row[mfg_column]).strip() if has_mfg else ""
+        exp_date = str(row[exp_column]).strip() if has_exp else ""
+        queues.setdefault((product, location), []).append({
+            "batch_no": batch_no, "qty": qty, "mfg_date": mfg_date, "exp_date": exp_date,
+        })
+    for key, batches in queues.items():
+        batches.sort(key=lambda b: (b["mfg_date"] == "", b["mfg_date"]))
+    return queues
+
+
 def rows_of(parsed, sheet_name):
     """Yields each row of a sheet as a plain dict, in file order, with
     a 1-based row index for traceability back to the raw upload."""

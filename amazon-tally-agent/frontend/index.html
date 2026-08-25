@@ -261,6 +261,13 @@
           </div>
         </div>
 
+        <div class="upload-card" style="margin-top:16px;">
+          <h3>Batch wise Summary <span class="optional-badge">optional</span></h3>
+          <p class="hint">Fills Batch no. / MFG Dt. / EXP Dt. by FIFO allocation (oldest batch first). Skip this entirely if you're not tracking batches yet — those three columns just stay blank. Map its columns (Product, Location, Batch No., Qty, MFG/EXP dates) once in /admin → Field Mapping.</p>
+          <div class="dropzone" id="dz-batch_summary">Drag a file here or <span class="browse">browse</span></div>
+          <div id="files-batch_summary"></div>
+        </div>
+
         <div class="card-grid" style="margin-top:16px;">
           <div class="upload-card">
             <h3>B2B Sales Report <span class="required-badge">Required*</span></h3>
@@ -706,7 +713,7 @@ async function removeFile(fileId) {
   await refreshRun();
 }
 
-['master', 'sample_tally', 'column_mapping', 'rules_sheet'].forEach(role => {
+['master', 'sample_tally', 'column_mapping', 'rules_sheet', 'batch_summary'].forEach(role => {
   const dz = document.getElementById('dz-' + role);
   const input = document.createElement('input');
   input.type = 'file'; input.style.display = 'none';
@@ -777,7 +784,7 @@ function renderStepper() {
 }
 
 function renderFiles() {
-  ['master', 'sample_tally', 'column_mapping', 'rules_sheet'].forEach(role => {
+  ['master', 'sample_tally', 'column_mapping', 'rules_sheet', 'batch_summary'].forEach(role => {
     const container = document.getElementById('files-' + role);
     container.innerHTML = '';
     STATE.files.filter(f => f.file_role === role).forEach(f => {
@@ -898,6 +905,18 @@ function renderIssueList(containerId, items, scope) {
   });
 }
 
+function describeAnswerValue(raw) {
+  if (!raw) return 'No details recorded';
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { return raw; }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (parsed.note) return parsed.note;
+    const pairs = Object.entries(parsed).map(([k, v]) => `${k}: ${v}`);
+    return pairs.length ? pairs.join(', ') : 'No details recorded';
+  }
+  return String(parsed);
+}
+
 function renderIssueGroupRows(container, items, scope) {
   const shown = items.slice(0, ISSUE_GROUP_RENDER_CAP);
   shown.forEach(item => {
@@ -905,11 +924,16 @@ function renderIssueGroupRows(container, items, scope) {
     const resolved = item.status !== 'pending';
     const deferred = item.resolution_mode === 'deferred';
     const icon = deferred ? `<div class="issue-icon warning">·</div>` : resolved ? `<div class="issue-icon done">✓</div>` : `<div class="issue-icon ${item.severity}">${item.severity === 'error' ? '!' : '·'}</div>`;
-    row.innerHTML = `${icon}<div class="issue-body"><div class="issue-title ${resolved && !deferred ? 'resolved' : ''}">${item.location_label || item.source_label || 'Row'}</div><div class="issue-meta">${item.source_label || ''}</div></div>`;
+    const audit = resolved && item.answered_at ? `<div class="issue-meta">${item.answered_by ? `by ${item.answered_by} · ` : ''}${new Date(item.answered_at).toLocaleString()}</div>` : '';
+    row.innerHTML = `${icon}<div class="issue-body"><div class="issue-title ${resolved && !deferred ? 'resolved' : ''}">${item.location_label || item.source_label || 'Row'}</div><div class="issue-meta">${item.source_label || ''}</div>${audit}</div>`;
     if (deferred) {
       row.innerHTML += `<span class="chip chip-amber">Deferred — column left blank</span>`;
     } else if (resolved) {
-      row.innerHTML += `<span class="chip chip-green">${item.resolution_mode === 'reupload' ? 'Sheet re-uploaded' : item.resolution_mode === 'suggest' ? 'Suggestion approved' : 'Fixed'}</span>`;
+      const chip = document.createElement('span');
+      chip.className = 'chip chip-green';
+      chip.textContent = item.resolution_mode === 'reupload' ? 'Sheet re-uploaded' : item.resolution_mode === 'suggest' ? 'Suggestion approved' : 'Fixed';
+      chip.title = describeAnswerValue(item.answer_value);
+      row.appendChild(chip);
     } else {
       const btn = document.createElement('button'); btn.className = 'btn btn-outline btn-sm'; btn.textContent = 'Resolve';
       btn.addEventListener('click', () => openIssueModal(item, scope));
