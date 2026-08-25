@@ -4,6 +4,7 @@ dependency this feature adds, and keeps tally_pipeline.py free of
 file-format concerns.
 """
 import io
+import re
 import pandas as pd
 
 
@@ -135,6 +136,134 @@ def build_batch_queue(parsed, sheet_name, product_column, location_column, batch
     for key, batches in queues.items():
         batches.sort(key=lambda b: (b["mfg_date"] == "", b["mfg_date"]))
     return queues
+
+
+_STOCK_SUMMARY_HEADER_TEXT = "Opening Balance"
+_MFG_EXP_PATTERN = re.compile(r"mfg\s*date\s*:\s*([^e]*?)\s*expiry\s*date\s*:\s*(.*)", re.IGNORECASE)
+# PIL's own confirmed alias: the "Main Location" Stock Summary export's
+# title has no warehouse code Amazon's Warehouse Id would ever contain -
+# it's PIL's own godown (Amazon Seller Flex), which the rest of the
+# pipeline already knows by the code "VZPL".
+_STOCK_SUMMARY_LOCATION_ALIASES = {"MAIN": "VZPL"}
+
+
+def parse_tally_stock_summary(blob):
+    """Parses a native Tally "Stock Summary" report export - the real
+    shape PIL's Batch wise Summary files turned out to be: one file per
+    warehouse, exported straight out of Tally (File > Export), not a
+    spreadsheet PIL typed by hand. Returns None if the file doesn't
+    look like this shape at all (no "Opening Balance" group header
+    found in the first few rows of any sheet), so the caller can fall
+    back to treating it as a flat, user-mapped sheet instead - this
+    format needs no column mapping at all, since its layout is fixed
+    and self-describing.
+
+    Layout: a title block whose first line is "<company name> <location
+    code>" (e.g. "PSYCHOTROPICS INDIA LIMITED BLR-7" -> location code
+    "BLR-7" - the last whitespace-separated token), then a two-row
+    grouped header (Opening Balance / Inwards / Outwards / Closing
+    Balance, each with its own Quantity/Alt. Units/Rate/Value sub-
+    columns), then one row per stock item (Excel cell indent 0)
+    followed by one indented row per batch of that item (indent > 0).
+    MFG/EXP dates are only present on a batch row that tracks them,
+    packed into one text cell as "Mfg Date :X  Expiry Date :Y". Data
+    ends at the "Grand Total" row.
+
+    Only the Opening Balance group's Quantity column is read - PIL
+    confirmed this is the stock actually available to allocate this
+    period's sales against; Inwards/Outwards/Closing reflect movements
+    Tally has already recorded elsewhere, not stock this pipeline's own
+    FIFO allocation should start consuming from scratch."""
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(blob), data_only=True)
+    for ws in wb.worksheets:
+        result = _parse_stock_summary_sheet(ws)
+        if result is not None:
+            return result
+    return None
+
+
+def _parse_stock_summary_sheet(ws):
+    max_row, max_col = ws.max_row, ws.max_column
+    header_row = None
+    for r in range(1, min(max_row, 30) + 1):
+        for c in range(1, max_col + 1):
+            v = ws.cell(row=r, column=c).value
+            if isinstance(v, str) and v.strip() == _STOCK_SUMMARY_HEADER_TEXT:
+                header_row = r
+                break
+        if header_row:
+            break
+    if not header_row:
+        return None
+
+    # Forward-fill the top header row's group names across the blank
+    # cells beneath a merged/spanning group label, so every column can
+    # be attributed to its group (Opening Balance / Inwards / ...).
+    group_by_col = {}
+    current_group = None
+    for c in range(1, max_col + 1):
+        v = ws.cell(row=header_row, column=c).value
+        if isinstance(v, str) and v.strip():
+            current_group = v.strip()
+        group_by_col[c] = current_group
+
+    qty_col = None
+    for c in range(1, max_col + 1):
+        sub = ws.cell(row=header_row + 1, column=c).value
+        if group_by_col.get(c) == _STOCK_SUMMARY_HEADER_TEXT and isinstance(sub, str) and sub.strip() == "Quantity":
+            qty_col = c
+            break
+    if not qty_col:
+        return None
+
+    location_code = None
+    for r in range(1, header_row):
+        v = ws.cell(row=r, column=1).value
+        if isinstance(v, str) and v.strip():
+            tokens = v.strip().split()
+            if tokens:
+                location_code = tokens[-1]
+            break
+    if location_code:
+        normalized = re.sub(r"[^A-Za-z0-9]", "", location_code).upper()
+        location_code = _STOCK_SUMMARY_LOCATION_ALIASES.get(normalized, normalized)
+
+    batches_by_product = {}
+    current_product = None
+    for r in range(header_row + 2, max_row + 1):
+        cell0 = ws.cell(row=r, column=1)
+        label = cell0.value
+        if label is None:
+            continue
+        label = str(label).strip()
+        if not label:
+            continue
+        if label.lower() == "grand total":
+            break
+        indent = (cell0.alignment.indent if cell0.alignment else 0) or 0
+        if indent == 0:
+            current_product = label
+            continue
+        if not current_product:
+            continue
+        qty_raw = ws.cell(row=r, column=qty_col).value
+        try:
+            qty = float(qty_raw) if qty_raw not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            qty = 0.0
+        if qty <= 0:
+            continue
+        mfg_date, exp_date = "", ""
+        detail = ws.cell(row=r, column=2).value
+        if isinstance(detail, str) and detail.strip():
+            m = _MFG_EXP_PATTERN.search(detail)
+            if m:
+                mfg_date, exp_date = m.group(1).strip(), m.group(2).strip()
+        batches_by_product.setdefault(current_product, []).append({
+            "batch_no": label, "qty": qty, "mfg_date": mfg_date, "exp_date": exp_date,
+        })
+    return {"location_code": location_code, "batches_by_product": batches_by_product}
 
 
 def rows_of(parsed, sheet_name):

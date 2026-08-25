@@ -279,45 +279,77 @@ def _build_master_map(files, mappings_index, ledger_config=None):
 
 
 def _build_batch_queues(files, mappings_index):
-    """({(internal_product_code, location): [{batch_no, qty, mfg_date,
-    exp_date}, ...]}, location_aware) - oldest MFG date first - from
-    every uploaded Batch wise Summary file. Returns ({}, False) if none
-    was uploaded, or if its own column mapping (batch_product_column
-    etc.) isn't configured yet - batch allocation is entirely optional,
-    never required to build a sheet, matching the PRD's own open
-    question ("Upload the batch wise summary every month?").
+    """({(normalized_product, normalized_location): [{batch_no, qty,
+    mfg_date, exp_date}, ...]}, location_aware) - oldest MFG date first
+    - from every uploaded Batch wise Summary file. Returns ({}, False)
+    if none was uploaded - batch allocation is entirely optional, never
+    required to build a sheet, matching the PRD's own open question
+    ("Upload the batch wise summary every month?").
 
-    batch_location_column is optional, not required alongside product/
-    batch/qty: the PRD's own description of this logic never scopes
-    FIFO by location, only by product ("the stock is picked in a FIFO
-    manner"), so a Batch wise Summary file with no location/warehouse
-    column of its own still allocates correctly, pooling every batch
-    for a product into one FIFO queue. location_aware tells the caller
-    which key shape to look rows up with - (product, godown) when a
-    location column is mapped, (product, "") when it isn't."""
+    Each file is tried first as a native Tally "Stock Summary" export
+    (tally_parsing.parse_tally_stock_summary) - PIL's real Batch wise
+    Summary files turned out to be exactly this: one per warehouse,
+    exported straight out of Tally, needing no column mapping at all
+    since the layout is fixed and self-describing, with the location
+    read straight from the file's own title block. Only a file that
+    doesn't match that shape at all falls back to the older flat,
+    user-mapped path (batch_product_column etc. in Field Mapping) - for
+    a differently-shaped batch file from some other source.
+
+    Keys are normalized (via _normalize_col - case/whitespace/
+    punctuation tolerant) on both sides so a Stock Summary's product
+    name ("ACNEGUARD FACE WASH GEL") and location ("BLR-7") match the
+    same product's internal_product_code and Amazon's unpunctuated
+    Warehouse Id ("BLR7") without an exact string match being required.
+    location_aware is true the moment any batch data carries a location
+    at all (every native Stock Summary file does) - a flat file with no
+    location_col mapped contributes product-only entries (location
+    key "") that simply won't be reachable once location_aware is on;
+    this is an accepted edge case for mixing an unmapped flat file
+    alongside real Stock Summary exports, not the common path."""
     batch_files = [f for f in files if f.file_role == BATCH_FILE_ROLE]
     if not batch_files:
         return {}, False
-    batch_mappings = mappings_index.get((BATCH_FILE_ROLE, None, None), [])
-    product_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_product_column"), None)
-    location_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_location_column"), None)
-    batch_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_no_column"), None)
-    qty_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_qty_column"), None)
-    mfg_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_mfg_date_column"), None)
-    exp_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_exp_date_column"), None)
-    if not (product_col and batch_col and qty_col):
-        return {}, False
-    location_aware = bool(location_col)
+
+    native_by_file = {f.id: tally_parsing.parse_tally_stock_summary(f.file_blob) for f in batch_files}
     combined = {}
+    location_aware = False
+
     for f in batch_files:
-        parsed = _parse_file(f)
-        names = tally_parsing.sheet_names_of(parsed)
-        if not names:
+        native = native_by_file[f.id]
+        if native is None:
             continue
-        sheet = next((m.source_sheet_name for m in batch_mappings if m.source_sheet_name), None) or names[0]
-        queue = tally_parsing.build_batch_queue(parsed, sheet, product_col, location_col, batch_col, qty_col, mfg_col, exp_col)
-        for key, batches in queue.items():
-            combined.setdefault(key, []).extend(batches)
+        location = native["location_code"] or ""
+        if not location:
+            continue
+        location_aware = True
+        loc_key = _normalize_col(location)
+        for product, batches in native["batches_by_product"].items():
+            key = (_normalize_col(product), loc_key)
+            combined.setdefault(key, []).extend(dict(b) for b in batches)
+
+    flat_files = [f for f in batch_files if native_by_file[f.id] is None]
+    if flat_files:
+        batch_mappings = mappings_index.get((BATCH_FILE_ROLE, None, None), [])
+        product_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_product_column"), None)
+        location_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_location_column"), None)
+        batch_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_no_column"), None)
+        qty_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_qty_column"), None)
+        mfg_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_mfg_date_column"), None)
+        exp_col = next((m.source_column_name for m in batch_mappings if m.target_field == "batch_exp_date_column"), None)
+        if product_col and batch_col and qty_col:
+            if location_col:
+                location_aware = True
+            for f in flat_files:
+                parsed = _parse_file(f)
+                names = tally_parsing.sheet_names_of(parsed)
+                if not names:
+                    continue
+                sheet = next((m.source_sheet_name for m in batch_mappings if m.source_sheet_name), None) or names[0]
+                queue = tally_parsing.build_batch_queue(parsed, sheet, product_col, location_col, batch_col, qty_col, mfg_col, exp_col)
+                for (product, location), batches in queue.items():
+                    key = (_normalize_col(product), _normalize_col(location))
+                    combined.setdefault(key, []).extend(batches)
     for batches in combined.values():
         batches.sort(key=lambda b: (b["mfg_date"] == "", b["mfg_date"]))
     return combined, location_aware
@@ -338,8 +370,14 @@ def _allocate_batch_fifo(queues, product_code, location, quantity):
     distinct from "found some, but not enough", which instead returns
     a final entry with batch_no None for the shortfall. Either case is
     the caller's job to surface as a review item, never to guess a
-    batch or silently short the row's quantity."""
-    key = (product_code, location)
+    batch or silently short the row's quantity.
+
+    product_code/location are normalized (_normalize_col) before the
+    lookup - _build_batch_queues stores its keys normalized the same
+    way, so a row's raw internal_product_code/godown values match
+    regardless of case/whitespace/punctuation differences against the
+    Batch wise Summary's own text."""
+    key = (_normalize_col(product_code), _normalize_col(location))
     if key not in queues:
         return None
     remaining = quantity
