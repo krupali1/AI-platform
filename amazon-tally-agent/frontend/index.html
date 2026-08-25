@@ -227,6 +227,7 @@
     <div class="topbar">
       <select id="runSelect"></select>
       <button class="btn btn-outline btn-sm" id="newRunBtn">+ New period</button>
+      <button class="btn btn-outline btn-sm" id="deleteRunBtn" title="Delete this period - removes its uploaded files, exceptions, and built sheets">🗑 Delete period</button>
     </div>
 
     <div class="content">
@@ -608,6 +609,18 @@ document.getElementById('createRunBtn').addEventListener('click', async () => {
     document.getElementById('runSelect').value = run.id;
     localStorage.setItem('tallyRunId_' + STATE.activePlatform, run.id);
     await refreshRun();
+  } catch (e) { showToast(e.message); }
+});
+document.getElementById('deleteRunBtn').addEventListener('click', async () => {
+  if (!STATE.runId) { showToast('No period selected.'); return; }
+  const run = STATE.runs.find(r => r.id === STATE.runId);
+  const label = (run && run.period_label) || `Run #${STATE.runId}`;
+  if (!confirm(`Delete "${label}"? This removes its uploaded files, exceptions, and any built Tally sheets. Field mappings and Rules are not affected.`)) return;
+  try {
+    await apiFetch(`/api/tally-runs/${STATE.runId}`, { method: 'DELETE' });
+    localStorage.removeItem('tallyRunId_' + STATE.activePlatform);
+    showToast('Period deleted.');
+    await loadRuns();
   } catch (e) { showToast(e.message); }
 });
 

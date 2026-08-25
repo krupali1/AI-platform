@@ -48,7 +48,19 @@ def build_master_sku_map(parsed, sheet_name, sku_column, code_column, multiplier
     layer's - confirmed against real PIL data that the Master file's
     own multiplier column is usually left blank even for genuine
     combo SKUs, so "blank" and "explicitly 1" have to stay
-    distinguishable this far down."""
+    distinguishable this far down.
+
+    A SKU whose (code, multiplier) pair repeats identically across more
+    than one master row is NOT a combo of identical components - it's
+    the same fact stated twice, a real data-entry duplication confirmed
+    in a real PIL master file (several SKUs each listed twice with the
+    exact same Product Name and a blank Pack Of). Left undeduped, this
+    silently doubled the affected orders' output rows, since the combo-
+    unbundling logic downstream has no way to tell "genuinely 2
+    identical units" apart from "the same row entered twice." A real
+    same-product combo is still expressed correctly - as a single row
+    with an explicit multiplier, or via the SKU-suffix pattern - so
+    deduping exact repeats here never discards a real multi-unit pack."""
     if sheet_name not in parsed:
         return {}
     df = parsed[sheet_name]
@@ -69,7 +81,10 @@ def build_master_sku_map(parsed, sheet_name, sku_column, code_column, multiplier
                     multiplier = float(raw)
                 except ValueError:
                     multiplier = None
-        mapping.setdefault(sku, []).append({"code": code, "multiplier": multiplier})
+        component = {"code": code, "multiplier": multiplier}
+        components = mapping.setdefault(sku, [])
+        if component not in components:
+            components.append(component)
     return mapping
 
 

@@ -319,6 +319,31 @@ def resolve_field_mapping(files, parsed_by_file, mappings_index, platforms_by_sl
     return all_rows
 
 
+def _dedupe_rows(rows):
+    """Drops an exact repeat of a row already seen - every mapped field
+    identical, not just the order ID. Confirmed against real PIL data:
+    the same order/SKU/amounts repeated byte-for-byte more than once,
+    a known real-world Amazon MTR export quirk (a report regenerated
+    or assembled from overlapping batches). Keeps the first occurrence
+    only; source_row_ref is deliberately excluded from the comparison
+    since it's expected to differ even for a genuine duplicate (it's
+    just "which raw file row this came from").
+
+    Never merges rows that only share an order ID - a shipment and its
+    later refund/reversal share the same order_id but have opposite-
+    signed amounts, and both must survive as distinct rows. Only a
+    field-for-field identical row is treated as a duplicate."""
+    seen = set()
+    out = []
+    for platform_slug, ref, fields in rows:
+        key = tuple(sorted(fields.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((platform_slug, ref, fields))
+    return out
+
+
 def resolve_sku_mapping(rows, sku_map):
     """Resolves each row's SKU against the master map and expands combo
     packs. sku_map values are lists of {code, multiplier} (see
@@ -596,6 +621,11 @@ def generate_output(session, run, generation):
         rows = resolve_field_mapping(files, parsed_by_file, mappings_index, platforms_by_slug)
         _log_generation(session, generation, "info", f"Read the uploaded reports - {len(rows)} row(s) mapped")
 
+        before_dedupe = len(rows)
+        rows = _dedupe_rows(rows)
+        if len(rows) < before_dedupe:
+            _log_generation(session, generation, "info", f"Removed {before_dedupe - len(rows)} exact duplicate row(s)")
+
         if generation.order_type:
             rows = [(p, ref, f) for p, ref, f in rows if (f.get("order_type") or "") == generation.order_type]
         if generation.location:
@@ -610,7 +640,12 @@ def generate_output(session, run, generation):
         _log_generation(session, generation, "info", f"Applied the row filter - {len(rows)} row(s) remain")
 
         rows, unmapped_skus = resolve_sku_mapping(rows, sku_map)
-        _log_generation(session, generation, "info", "Resolved SKUs against the Master file and unbundled combo packs")
+        before_combo_dedupe = len(rows)
+        rows = _dedupe_rows(rows)
+        combo_dupes_removed = before_combo_dedupe - len(rows)
+        _log_generation(session, generation, "info",
+            f"Resolved SKUs against the Master file and unbundled combo packs"
+            + (f" - removed {combo_dupes_removed} duplicate row(s) introduced by the fan-out" if combo_dupes_removed else ""))
 
         results = apply_conditional_rules(rows, rules, ledger_config)
         _log_generation(session, generation, "info", "Applied configured rules (tax split, voucher type, ledger mapping)")
