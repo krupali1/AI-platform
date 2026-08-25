@@ -240,7 +240,16 @@ def parse_column_mapping_sheet(parsed, sheet_name=None):
         if remarks_col:
             remarks_text = str(row.get(remarks_col, "")).strip()
             if remarks_text and remarks_text != "-" and _looks_like_conditional(remarks_text):
-                flagged.append({"label": f'"{tally_label}" has a noted exception', "reason": f'"{remarks_text[:160]}" - this is a conditional rule, not applied automatically. Add it as a Rule if you need it enforced.'})
+                if key == "godown":
+                    # Godown can never be the target of a configurable
+                    # rule (enforced at the API level) - PIL's specific
+                    # Invoice-Number-prefix pattern is instead handled
+                    # as dedicated pipeline logic (tally_pipeline.py's
+                    # _infer_godown_from_invoice), not something a
+                    # re-upload of this sheet can turn into a Rule.
+                    flagged.append({"label": f'"{tally_label}" has a noted exception', "reason": f'"{remarks_text[:160]}" - already handled: blank Godown is auto-filled from Invoice Number\'s prefix (IN-/VZPL-) as built-in pipeline logic, not a configurable Rule (Godown can never be a Rule\'s target). Nothing to do here.'})
+                else:
+                    flagged.append({"label": f'"{tally_label}" has a noted exception', "reason": f'"{remarks_text[:160]}" - this is a conditional rule, not applied automatically. Add it as a Rule if you need it enforced.'})
 
     return {"mappings": mappings, "flagged": flagged}
 

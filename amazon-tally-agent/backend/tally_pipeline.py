@@ -319,6 +319,39 @@ def resolve_field_mapping(files, parsed_by_file, mappings_index, platforms_by_sl
     return all_rows
 
 
+# Warehouse ID (Godown) comes back blank on self-fulfilled/MFN orders.
+# The PRD documents that its Invoice Number prefix names the warehouse
+# in that case - confirmed and explicitly authorized by PIL to apply
+# for real (reversing an earlier "never override Godown" instruction,
+# specifically and only for this narrow, PRD-documented pattern).
+# Deliberately implemented as dedicated pipeline logic, not a TallyRule
+# - godown stays permanently un-settable by any *configurable* rule
+# (still enforced via FORBIDDEN_ACTION_FIELDS), so an arbitrary future
+# rule still can't silently reassign a warehouse; only this one
+# specific, auditable, code-reviewed inference can.
+_GODOWN_INVOICE_PREFIXES = {"IN": "IN", "VZPL": "VZPL"}
+
+
+def _infer_godown_from_invoice(fields):
+    """Fills a blank godown from invoice_number's prefix when it's one
+    of the two PRD-documented codes. Never touches a godown that's
+    already set, and never guesses for a prefix outside that known
+    set - an unrecognized or missing invoice number is left blank and
+    still surfaces as a normal review exception. Returns True if it
+    filled something in."""
+    if fields.get("godown"):
+        return False
+    invoice = str(fields.get("invoice_number") or "").strip().upper()
+    if not invoice:
+        return False
+    prefix = invoice.split("-")[0].strip()
+    inferred = _GODOWN_INVOICE_PREFIXES.get(prefix)
+    if not inferred:
+        return False
+    fields["godown"] = inferred
+    return True
+
+
 def _dedupe_rows(rows):
     """Drops an exact repeat of a row already seen - every mapped field
     identical, not just the order ID. Confirmed against real PIL data:
@@ -625,6 +658,13 @@ def generate_output(session, run, generation):
         rows = _dedupe_rows(rows)
         if len(rows) < before_dedupe:
             _log_generation(session, generation, "info", f"Removed {before_dedupe - len(rows)} exact duplicate row(s)")
+
+        # Must happen before the location filter below - a row whose
+        # Godown only exists because of this inference still needs to
+        # land in the right (order_type, location) slice.
+        godown_inferred = sum(1 for _, _, f in rows if _infer_godown_from_invoice(f))
+        if godown_inferred:
+            _log_generation(session, generation, "info", f"Inferred Godown from Invoice Number for {godown_inferred} row(s) with a blank Warehouse ID")
 
         if generation.order_type:
             rows = [(p, ref, f) for p, ref, f in rows if (f.get("order_type") or "") == generation.order_type]
