@@ -631,8 +631,22 @@ def apply_conditional_rules(rows, rules, ledger_config):
     return results
 
 
+# Column Mapping Sheet's own literal formula for Party Name: "Amazon
+# FBA" + Godown, except these two Godown values which name a specific
+# Amazon Seller Central/Flex account instead of a physical FBA
+# warehouse - not a configurable Rule (like the Godown invoice-prefix
+# inference next to _infer_godown_from_invoice, this is a fixed,
+# always-applicable PRD formula, not a business preference PIL would
+# ever want to turn off or edit per platform).
+_PARTY_NAME_GODOWN_ALIASES = {
+    "IN": "Amazon Seller Central",
+    "VZPL": "Amazon Seller Flex",
+}
+
+
 def compute_totals(fields):
-    """Pure arithmetic - no AI call in this step or anywhere else in
+    """Pure arithmetic (plus the same kind of text-template fill as
+    narration below it) - no AI call in this step or anywhere else in
     the deterministic path.
 
     GST is computed one of two ways, chosen per row by which source
@@ -707,6 +721,10 @@ def compute_totals(fields):
     fields["invoice_total"] = round(taxable_value + total_tax, 2)
     if not fields.get("narration"):
         fields["narration"] = f"{fields.get('platform', '')} {fields.get('order_type', '')} order {fields.get('order_id', '')} - {fields.get('internal_product_code') or fields.get('sku', '')}"
+    if not fields.get("party_name") and fields.get("platform", "").strip().lower() == "amazon":
+        godown = str(fields.get("godown") or "").strip()
+        if godown:
+            fields["party_name"] = _PARTY_NAME_GODOWN_ALIASES.get(godown.upper(), f"Amazon FBA {godown}")
 
 
 def validate_and_flag(fields):
