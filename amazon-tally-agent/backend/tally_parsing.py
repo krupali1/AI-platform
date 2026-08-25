@@ -139,7 +139,14 @@ def build_batch_queue(parsed, sheet_name, product_column, location_column, batch
 
 
 _STOCK_SUMMARY_HEADER_TEXT = "Opening Balance"
-_MFG_EXP_PATTERN = re.compile(r"mfg\s*date\s*:\s*([^e]*?)\s*expiry\s*date\s*:\s*(.*)", re.IGNORECASE)
+# Tally actually puts "Mfg Date :X" and "Expiry Date :Y" in two
+# separate adjacent cells (columns 2 and 3), never combined in one -
+# confirmed against real PIL exports. The combined pattern is kept as
+# a fallback for a file where they do end up in one cell (a merged
+# cell, or a different Tally version's export), so either layout works.
+_MFG_EXP_COMBINED_PATTERN = re.compile(r"mfg\s*date\s*:\s*([^e]*?)\s*expiry\s*date\s*:\s*(.*)", re.IGNORECASE)
+_MFG_ONLY_PATTERN = re.compile(r"mfg\s*date\s*:\s*(.*)", re.IGNORECASE)
+_EXP_ONLY_PATTERN = re.compile(r"expiry\s*date\s*:\s*(.*)", re.IGNORECASE)
 # PIL's own confirmed alias: the "Main Location" Stock Summary export's
 # title has no warehouse code Amazon's Warehouse Id would ever contain -
 # it's PIL's own godown (Amazon Seller Flex), which the rest of the
@@ -165,9 +172,11 @@ def parse_tally_stock_summary(blob):
     Balance, each with its own Quantity/Alt. Units/Rate/Value sub-
     columns), then one row per stock item (Excel cell indent 0)
     followed by one indented row per batch of that item (indent > 0).
-    MFG/EXP dates are only present on a batch row that tracks them,
-    packed into one text cell as "Mfg Date :X  Expiry Date :Y". Data
-    ends at the "Grand Total" row.
+    MFG/EXP dates are only present on a batch row that tracks them, one
+    in each of the two cells right after the batch no. ("Mfg Date :X"
+    then "Expiry Date :Y" - two separate adjacent cells, never one
+    combined cell, confirmed against real PIL exports). Data ends at
+    the "Grand Total" row.
 
     Only the Opening Balance group's Quantity column is read - PIL
     confirmed this is the stock actually available to allocate this
@@ -255,11 +264,22 @@ def _parse_stock_summary_sheet(ws):
         if qty <= 0:
             continue
         mfg_date, exp_date = "", ""
-        detail = ws.cell(row=r, column=2).value
-        if isinstance(detail, str) and detail.strip():
-            m = _MFG_EXP_PATTERN.search(detail)
+        mfg_cell = ws.cell(row=r, column=2).value
+        exp_cell = ws.cell(row=r, column=3).value
+        if isinstance(mfg_cell, str) and "expiry" in mfg_cell.lower():
+            # Combined-cell layout fallback - both dates in column 2.
+            m = _MFG_EXP_COMBINED_PATTERN.search(mfg_cell)
             if m:
                 mfg_date, exp_date = m.group(1).strip(), m.group(2).strip()
+        else:
+            if isinstance(mfg_cell, str) and mfg_cell.strip():
+                m = _MFG_ONLY_PATTERN.search(mfg_cell)
+                if m:
+                    mfg_date = m.group(1).strip()
+            if isinstance(exp_cell, str) and exp_cell.strip():
+                m = _EXP_ONLY_PATTERN.search(exp_cell)
+                if m:
+                    exp_date = m.group(1).strip()
         batches_by_product.setdefault(current_product, []).append({
             "batch_no": label, "qty": qty, "mfg_date": mfg_date, "exp_date": exp_date,
         })
