@@ -163,7 +163,7 @@ def _normalize_col(s):
     return re.sub(r"[\s_.\-]+", "", str(s or "")).strip().lower()
 
 
-def _normalize_product_name(s):
+def _normalize_product_notation(s):
     """_normalize_col plus a couple of pack-size notation quirks
     confirmed against real PIL data (Master File vs Tally's own Stock
     Summary product names): parentheses around a pack size are
@@ -182,6 +182,44 @@ def _normalize_product_name(s):
     s = re.sub(r"(?<!\d)1x(?=\d)", "", s)
     s = re.sub(r"(\d)gm\b", r"\1g", s)
     return s
+
+
+# Confirmed by PIL - each group below is the SAME physical product
+# under more than one name, not different products: the SKU was kept
+# unchanged across a rename or a discontinued/replaced pack, so the
+# Master File and Tally's own Stock Summary records disagree in text
+# only, never in what they actually refer to. This is an explicit,
+# named-pair override, not a general rule - _normalize_product_notation's
+# own notation-only logic deliberately never guesses that two
+# different quantities (e.g. "100g" vs "125g") are the same product,
+# since that guess would be wrong for any pair PIL hasn't confirmed.
+_CONFIRMED_PRODUCT_NAME_ALIAS_GROUPS = [
+    ["SENSOPIL GEL 1X125G", "SENSOPIL GEL 1X100G", "SENSOPIL GEL 1X125 GM"],
+    ["NEEM & ALOEVERA SOAP 100 GM", "DERMACARE NEEM & ALOEVERA SOAP 1X100G", "DERMACARE NEEM & ALOVERA SOAP 1X100G"],
+    ["CALPIL PET SYRUP 1X100ML", "CALPIL PET FEED SUP. SYRUP 1X200ML"],
+]
+
+
+def _build_confirmed_product_name_aliases():
+    aliases = {}
+    for group in _CONFIRMED_PRODUCT_NAME_ALIAS_GROUPS:
+        canonical = _normalize_product_notation(group[0])
+        for name in group:
+            aliases[_normalize_product_notation(name)] = canonical
+    return aliases
+
+
+_CONFIRMED_PRODUCT_NAME_ALIASES = _build_confirmed_product_name_aliases()
+
+
+def _normalize_product_name(s):
+    """_normalize_product_notation, then _CONFIRMED_PRODUCT_NAME_ALIASES -
+    a short, explicit list of specific name pairs PIL has confirmed
+    really are the same product (a rename or discontinued/replaced
+    pack that kept its SKU unchanged), checked only after the generic
+    notation normalization above has already run."""
+    normalized = _normalize_product_notation(s)
+    return _CONFIRMED_PRODUCT_NAME_ALIASES.get(normalized, normalized)
 
 
 def _apply_mapping_to_sheet(parsed, mappings):
@@ -416,6 +454,19 @@ def _allocate_batch_fifo(queues, product_code, location, quantity):
     if remaining > 0:
         allocations.append({"batch_no": None, "qty": remaining, "mfg_date": None, "exp_date": None})
     return allocations
+
+
+# PIL confirmed: a Cancel or Free Replacement transaction genuinely
+# never consumes real stock, so it having no Batch/MFG/EXP data isn't
+# a Batch Summary gap worth a human's attention - it's expected. This
+# only suppresses the review-item/flag for these transaction types;
+# Batch No./MFG/EXP still come back blank exactly as they would for
+# any other unmatched row, just without asking anyone to chase it.
+_BATCH_DATA_EXEMPT_TRANSACTION_TYPES = {"cancel", "freereplacement"}
+
+
+def _batch_data_exempt(fields):
+    return _normalize_col(fields.get("transaction_type")) in _BATCH_DATA_EXEMPT_TRANSACTION_TYPES
 
 
 def apply_batch_allocation(rows, batch_queues, location_aware=False):
@@ -686,6 +737,18 @@ _PARTY_NAME_GODOWN_ALIASES = {
     "VZPL": "Amazon Seller Flex",
 }
 
+# PIL's confirmed convention: a warehouse code always gets a hyphen
+# between its letters and trailing digits in Party Name ("BLR7" ->
+# "BLR-7") - this only reformats the string used to build Party Name,
+# it never touches fields["godown"] itself, which must stay the
+# platform's own Warehouse ID verbatim (see FORBIDDEN_ACTION_FIELDS).
+_PARTY_NAME_GODOWN_HYPHEN_PATTERN = re.compile(r"^([A-Za-z]+)(\d+)$")
+
+
+def _hyphenate_godown_for_party_name(godown):
+    m = _PARTY_NAME_GODOWN_HYPHEN_PATTERN.match(godown)
+    return f"{m.group(1)}-{m.group(2)}" if m else godown
+
 
 def compute_totals(fields):
     """Pure arithmetic (plus the same kind of text-template fill as
@@ -767,7 +830,8 @@ def compute_totals(fields):
     if not fields.get("party_name") and fields.get("platform", "").strip().lower() == "amazon":
         godown = str(fields.get("godown") or "").strip()
         if godown:
-            fields["party_name"] = _PARTY_NAME_GODOWN_ALIASES.get(godown.upper(), f"Amazon FBA {godown}")
+            alias = _PARTY_NAME_GODOWN_ALIASES.get(godown.upper())
+            fields["party_name"] = alias or f"Amazon FBA {_hyphenate_godown_for_party_name(godown)}"
 
 
 def validate_and_flag(fields):
@@ -970,7 +1034,7 @@ def generate_output(session, run, generation):
             missing = validate_and_flag(fields)
 
             status = "ok"
-            if fields.get("sku_in_master") == "false" or fields.get("batch_allocation_status"):
+            if fields.get("sku_in_master") == "false" or (fields.get("batch_allocation_status") and not _batch_data_exempt(fields)):
                 status = "flagged"
             if escalations:
                 status = "escalated"
@@ -1024,7 +1088,7 @@ def generate_output(session, run, generation):
                     trigger_reason="missing_required_field",
                 ))
             batch_status = fields.get("batch_allocation_status")
-            if batch_status:
+            if batch_status and not _batch_data_exempt(fields):
                 if batch_status == "no_batch_data":
                     title = f"No Batch Summary data for \"{fields.get('internal_product_code', '')}\" at \"{fields.get('godown', '')}\""
                     body = "This product/location combination doesn't appear anywhere in the uploaded Batch Summary. Batch no./MFG/EXP left blank - enter manually if needed."
