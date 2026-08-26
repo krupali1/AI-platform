@@ -39,8 +39,19 @@ def build_master_sku_map(parsed, sheet_name, sku_column, code_column, multiplier
     with multiplier 3; a combo of different products is multiple master
     rows sharing the same SKU, one per component - PIL adds a row to
     the master sheet for a new combo, never touches code or a rule.
-    Blank/missing SKUs are skipped rather than mapped to an empty
-    string, so a lookup miss stays a genuine miss.
+
+    A blank SKU cell means "same SKU as the row above" - PIL's own
+    convention for a combo's second (and later) component, confirmed
+    against a real Master File where every multi-component combo is
+    written as one row carrying the SKU plus its first component, then
+    one further row per remaining component with the SKU cell left
+    blank rather than retyped. Forward-filling here (not skipping) is
+    what makes those extra rows resolve at all - skipping them instead
+    would silently drop every combo down to just its first component,
+    both losing that component's own output row and overcharging the
+    one component that's left with the whole combo's value. Only a row
+    truly at the top of the file with no SKU above it to inherit is a
+    genuine skip.
 
     multiplier is None (not defaulted to 1) when the column isn't
     mapped or a row's value is blank/invalid - resolving a blank into
@@ -69,8 +80,12 @@ def build_master_sku_map(parsed, sheet_name, sku_column, code_column, multiplier
         return {}
     has_multiplier_col = multiplier_column and multiplier_column in df.columns
     mapping = {}
+    last_sku = None
     for _, row in df.iterrows():
-        sku = str(row[sku_column]).strip()
+        raw_sku = str(row[sku_column]).strip()
+        if raw_sku:
+            last_sku = raw_sku
+        sku = raw_sku or last_sku
         code = str(row[code_column]).strip()
         if not sku or not code:
             continue

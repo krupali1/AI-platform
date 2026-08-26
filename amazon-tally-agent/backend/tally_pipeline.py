@@ -604,12 +604,25 @@ def resolve_sku_mapping(rows, sku_map):
     packs. sku_map values are lists of {code, multiplier} (see
     tally_parsing.build_master_sku_map):
       - one component -> same row, internal_product_code set and
-        quantity multiplied (a same-product combo, e.g. a 3-pack).
+        quantity multiplied (a same-product combo, e.g. a 3-pack) -
+        gross_amount is left as-is, since Amazon's own gross_amount
+        already covers the full sale regardless of how many units it
+        was split into.
       - multiple components -> the row fans out into one output row
         per component, each with its own code and multiplied quantity
         (a combo of different products) - source_row_ref gets a "#i"
         suffix per fanned-out row so each stays individually traceable
-        back to the one input row it came from.
+        back to the one input row it came from. Unlike the same-
+        product case, gross_amount/discount here DO need splitting:
+        Amazon reports one combined price for the whole combo, so
+        crediting that full amount to every component would multiply
+        the combo's real revenue and tax by its own component count.
+        Each component's share is its own multiplier's proportion of
+        the combo's total multiplier weight (equal shares when every
+        component's multiplier is 1, which is the common case; a
+        component explicitly weighted 2x a sibling gets 2x its share) -
+        the only split rule the master file's own data can support,
+        since it carries no separate per-component price.
       - no match -> row is kept as a single row, flagged sku_in_master
         = "false".
     Returns (new_rows, unmapped_skus) - new_rows replaces the input
@@ -632,11 +645,19 @@ def resolve_sku_mapping(rows, sku_map):
             new_rows.append((platform_slug, ref, fields))
             continue
 
+        total_weight = sum(c["multiplier"] for c in components) if len(components) > 1 else 1
+        base_gross = float(fields.get("gross_amount") or 0)
+        base_discount = float(fields.get("discount") or 0)
+
         for idx, component in enumerate(components):
             row_fields = fields if len(components) == 1 else dict(fields)
             row_fields["internal_product_code"] = component["code"]
             row_fields["sku_in_master"] = "true"
             row_fields["quantity"] = base_qty * component["multiplier"]
+            if len(components) > 1 and total_weight:
+                share = component["multiplier"] / total_weight
+                row_fields["gross_amount"] = round(base_gross * share, 2)
+                row_fields["discount"] = round(base_discount * share, 2)
             row_ref = ref if len(components) == 1 else f"{ref}#{idx}"
             new_rows.append((platform_slug, row_ref, row_fields))
 
