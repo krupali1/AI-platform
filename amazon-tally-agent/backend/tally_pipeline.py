@@ -163,6 +163,27 @@ def _normalize_col(s):
     return re.sub(r"[\s_.\-]+", "", str(s or "")).strip().lower()
 
 
+def _normalize_product_name(s):
+    """_normalize_col plus a couple of pack-size notation quirks
+    confirmed against real PIL data (Master File vs Tally's own Stock
+    Summary product names): parentheses around a pack size are
+    sometimes present, sometimes not ("(1X50 GM)" vs "1X50GM"); a
+    redundant "1x" pack-count prefix is sometimes written, sometimes
+    omitted (a bare product is definitionally the same as an explicit
+    "1x" of it, so dropping it never conflates two different pack
+    sizes); and "50gm" vs "50g" is the same unit abbreviated
+    differently. Deliberately NOT more aggressive than this - it never
+    touches a real quantity/multiplier digit (a genuine "3x" combo
+    pack, or "100g" vs "125g", are left exactly as different as they
+    are), since collapsing those would risk matching a sale to the
+    wrong product's batch, not just fixing a spelling difference."""
+    s = _normalize_col(s)
+    s = s.replace("(", "").replace(")", "")
+    s = re.sub(r"(?<!\d)1x(?=\d)", "", s)
+    s = re.sub(r"(\d)gm\b", r"\1g", s)
+    return s
+
+
 def _apply_mapping_to_sheet(parsed, mappings):
     """Restricts to sheets actually referenced by a mapping (falls back
     to the file's first sheet if no mapping names one) - Amazon reports
@@ -325,7 +346,7 @@ def _build_batch_queues(files, mappings_index):
         location_aware = True
         loc_key = _normalize_col(location)
         for product, batches in native["batches_by_product"].items():
-            key = (_normalize_col(product), loc_key)
+            key = (_normalize_product_name(product), loc_key)
             combined.setdefault(key, []).extend(dict(b) for b in batches)
 
     flat_files = [f for f in batch_files if native_by_file[f.id] is None]
@@ -348,7 +369,7 @@ def _build_batch_queues(files, mappings_index):
                 sheet = next((m.source_sheet_name for m in batch_mappings if m.source_sheet_name), None) or names[0]
                 queue = tally_parsing.build_batch_queue(parsed, sheet, product_col, location_col, batch_col, qty_col, mfg_col, exp_col)
                 for (product, location), batches in queue.items():
-                    key = (_normalize_col(product), _normalize_col(location))
+                    key = (_normalize_product_name(product), _normalize_col(location))
                     combined.setdefault(key, []).extend(batches)
     for batches in combined.values():
         batches.sort(key=lambda b: (b["mfg_date"] == "", b["mfg_date"]))
@@ -372,12 +393,13 @@ def _allocate_batch_fifo(queues, product_code, location, quantity):
     the caller's job to surface as a review item, never to guess a
     batch or silently short the row's quantity.
 
-    product_code/location are normalized (_normalize_col) before the
-    lookup - _build_batch_queues stores its keys normalized the same
-    way, so a row's raw internal_product_code/godown values match
-    regardless of case/whitespace/punctuation differences against the
-    Batch wise Summary's own text."""
-    key = (_normalize_col(product_code), _normalize_col(location))
+    product_code/location are normalized (_normalize_product_name /
+    _normalize_col) before the lookup - _build_batch_queues stores its
+    keys normalized the same way, so a row's raw internal_product_code
+    /godown values match regardless of case/whitespace/punctuation/
+    pack-size-notation differences against the Batch wise Summary's
+    own text."""
+    key = (_normalize_product_name(product_code), _normalize_col(location))
     if key not in queues:
         return None
     remaining = quantity
