@@ -1,0 +1,35 @@
+databases:
+  - name: pil-tally-db
+    plan: starter
+    postgresMajorVersion: 16
+
+services:
+  - type: web
+    name: pil-tally-agent
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /login
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pil-tally-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: true
+      # Set these in the Render dashboard after the first deploy, not here -
+      # secrets don't belong in a file committed to the repo.
+      #   AUTH_USERS       "name:password:role,name:password:role,..."
+      #   ANTHROPIC_API_KEY  optional - AI rule/mapping suggestions
+      #   RESEND_API_KEY     optional - "Email the sheet"
+      #   RESEND_FROM_EMAIL  optional - required alongside RESEND_API_KEY
+      - key: AUTH_USERS
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false

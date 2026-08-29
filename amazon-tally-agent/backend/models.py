@@ -61,6 +61,21 @@ class TallyGeneration(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     processed_at = Column(DateTime, nullable=True)
 
+    # Human approval workflow - orthogonal to `status` above, which
+    # tracks the pipeline's own processing state. A generation only
+    # reaches "ready" once every stage="final" TallyReviewItem is
+    # resolved; review_status then tracks the separate Creator ->
+    # Approver sign-off before the file can be downloaded or emailed.
+    # "draft" (not sent yet) -> "submitted" (with the Approver) ->
+    # "approved" (cleared) or "returned" (Approver left comments -
+    # see TallyReviewItem stage="review" - and it goes back to "draft"
+    # once the Creator resolves all of them and resubmits).
+    review_status = Column(String, default="draft")
+    submitted_by = Column(String, nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
+    approved_by = Column(String, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+
 
 class TallyPlatform(Base):
     """A sales channel the agent pulls reports from - Amazon, Flipkart,
@@ -197,6 +212,12 @@ class TallyReviewItem(Base):
     unmapped SKU). stage="final" items belong to one TallyGeneration -
     found by generate_output() while building that specific
     (order_type, location) slice (e.g. a row with no matching rule).
+    stage="review" items are the odd one out: raised by a person (the
+    Approver), not the pipeline, when they send a generation back with
+    per-cell comments - reuses the exact same three-mode resolution
+    shape (a comment is just a "fix"-only item pointing at one row/
+    field) so the Creator answers it in the same UI as any other
+    exception, no separate code path needed.
 
     detail is one JSON blob for everything that varies by trigger_reason
     rather than dozens of nullable columns: {"facts": [{"label",
@@ -239,4 +260,113 @@ class Event(Base):
     module = Column(String)
     status = Column(String)      # "info" | "success" | "error"
     message = Column(Text)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class TallyUser(Base):
+    """Real per-person accounts with a role, replacing the old env-var
+    shared-login list (auth.py) now that "who can edit the Skills" and
+    "who approves a sheet" are real, different people, not just one
+    shared team password. Seeded on first startup from AUTH_USERS /
+    APP_USERNAME+APP_PASSWORD (see auth.py) so an existing deployment's
+    env config keeps working with zero manual setup; from then on an
+    Admin manages accounts from the People page and the env vars are
+    only read once, never again.
+
+    role is one of "creator" (uploads files, settles exceptions, builds
+    the sheet), "approver" (reviews the built sheet, comments, approves
+    or sends it back), "admin" (owns the Skills - SKU/Master mapping,
+    Rules, Sample Tally Format - nobody else can edit them). A person
+    can only hold one role at a time, matching the prototype this was
+    built from - the Admin reassigns a person's role from People rather
+    than a person holding several roles at once."""
+    __tablename__ = "tally_users"
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True)
+    password_hash = Column(String)       # "<hex salt>$<hex pbkdf2 hash>" - see auth.py hash_password/verify_password
+    display_name = Column(String)
+    email = Column(String, nullable=True)
+    role = Column(String, default="creator")
+    is_active = Column(Boolean, default=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class TallyNotification(Base):
+    """One user-facing notification - an Approver learns a sheet is
+    waiting on them, a Creator learns their sheet was approved or sent
+    back. username is who it's *for* (not who caused it), matching the
+    same plain-string-identity convention as created_by/uploaded_by/
+    answered_by elsewhere in this file rather than a hard FK, so a
+    notification for a person who's since been removed from TallyUser
+    still displays sensibly instead of breaking."""
+    __tablename__ = "tally_notifications"
+    id = Column(Integer, primary_key=True)
+    username = Column(String)
+    kind = Column(String)        # "submitted_for_review" | "approved" | "returned"
+    generation_id = Column(Integer, ForeignKey("tally_generations.id"), nullable=True)
+    title = Column(String)
+    message = Column(Text, nullable=True)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class TallySampleFormat(Base):
+    """The "Sample Tally Format" Skill - the ordered list of output
+    column names the final Excel/zip export writes, set once by an
+    Admin (typed by hand or parsed from an uploaded sample file, see
+    POST /api/tally-sample-format and .../from-file) instead of being
+    re-uploaded as a file on every single run. A single global row
+    (queried without a platform filter, like TallyLedgerConfig) -
+    every platform in this app produces the same PIL Tally format, not
+    a per-platform one. columns_json is a JSON list of strings, in
+    the exact order they must appear in the output. Falls back to a
+    run's own uploaded file_role="sample_tally" file when this is
+    empty, so an existing run that already uploaded one keeps working
+    unchanged - see _build_excel_zip_bytes in main.py."""
+    __tablename__ = "tally_sample_formats"
+    id = Column(Integer, primary_key=True)
+    columns_json = Column(Text)
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class TallyAgentNotes(Base):
+    """The "Agent Notes" Skill - freeform markdown an Admin writes
+    directly in chat (no file upload), like a SKILL.md: background,
+    conventions, edge cases, anything that doesn't fit the structured
+    Rules/Field Mapping/Master tables. Not applied by the deterministic
+    pipeline itself - instead it's prepended as context to every AI-
+    assist call (suggest_rule, suggest_rules_from_document, and their
+    suggest-from-text siblings in main.py), the same "AI only ever
+    proposes, a human still reviews and saves" contract as those. A
+    single global row, versioned the same way as every other Skill -
+    see TallySkillVersion, skill_key="agent_notes"."""
+    __tablename__ = "tally_agent_notes"
+    id = Column(Integer, primary_key=True)
+    body_md = Column(Text)
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class TallySkillVersion(Base):
+    """An append-only snapshot of one "Skill" (the Rules list, the
+    Field Mapping table, or one platform's Master/SKU mapping) taken
+    every time an Admin changes it - what the Skills page's "N
+    versions" / "Restore" actually reads from, on top of the live
+    TallyRule/TallyFieldMapping rows that the pipeline itself always
+    reads (this table is a history log, never the pipeline's source of
+    truth). skill_key identifies which skill a row belongs to: "rules",
+    "field_mappings", or "master:<platform_slug>" for a per-platform
+    Master File. version_number is 1, 2, 3... per skill_key, so
+    "v4.2"-style display is just this number. snapshot is the full
+    JSON state at that point (enough to actually restore from, not
+    just a change description)."""
+    __tablename__ = "tally_skill_versions"
+    id = Column(Integer, primary_key=True)
+    skill_key = Column(String)
+    version_number = Column(Integer)
+    snapshot = Column(Text)              # JSON - shape depends on skill_key
+    change_summary = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

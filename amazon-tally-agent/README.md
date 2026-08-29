@@ -78,3 +78,22 @@ This has been run against a real month of PIL's actual Amazon MTR B2C/B2B export
 ## Security note
 
 `AUTH_USERS`/`APP_USERNAME`+`APP_PASSWORD` is intentionally simple — one shared login for a small internal team, not a general user system. Don't expose this deployment to the public internet without at least that configured, and set `COOKIE_SECURE=true` once it's served over HTTPS.
+
+## Deploying to Render
+
+This repo is shared with an unrelated platform living at the repo root (its own `Dockerfile`/deployment, nothing to do with this app) — everything for deploying the Tally agent is self-contained inside this `amazon-tally-agent/` directory: its own `Dockerfile` and `render.yaml`. **Always set the Render service's Root Directory to `amazon-tally-agent`** so it only ever sees this app, never the unrelated one at repo root.
+
+File uploads are stored as blobs in the database (see `TallyUploadedFile`), so there's no separate disk/volume to configure — Postgres is the only thing that needs to persist.
+
+1. Push the branch you want deployed to GitHub (Render deploys from GitHub, not from your machine).
+2. In the Render dashboard: **New → Blueprint**, point it at this repo and the branch you pushed. When asked for a Root Directory / render.yaml location, set it to `amazon-tally-agent` — Render then reads `amazon-tally-agent/render.yaml` and shows you the `pil-tally-agent` web service + `pil-tally-db` database it's about to create. Confirm.
+   - If your Render account's Blueprint flow doesn't offer a root-directory option for monorepos, use the manual path instead: **New → PostgreSQL** (create `pil-tally-db` first), then **New → Web Service** → connect this repo → set **Root Directory** to `amazon-tally-agent`, **Runtime** to Docker → in **Environment**, set `DATABASE_URL` to the Postgres instance's "Internal Connection String" and add the env vars from step 3 below plus a generated `SESSION_SECRET` and `COOKIE_SECURE=true`.
+3. Once the first deploy finishes, open the web service's **Environment** tab and set the secrets that are deliberately *not* in `render.yaml` (so they never end up committed to the repo):
+   - `AUTH_USERS` — real team logins, e.g. `priya:choose-a-real-password:admin,rahul:choose-a-real-password:approver,anita:choose-a-real-password:creator`
+   - `ANTHROPIC_API_KEY` — optional, enables the AI rule/mapping suggestions instead of demo mode
+   - `RESEND_API_KEY` + `RESEND_FROM_EMAIL` — optional, enables "Email the sheet"
+
+   Saving these triggers a redeploy that picks them up. `SESSION_SECRET` and `DATABASE_URL` are already handled by `render.yaml` (auto-generated / wired to the database) if you used the Blueprint path.
+4. Render gives the service a `https://pil-tally-agent-xxxx.onrender.com`-style URL with HTTPS already on — `COOKIE_SECURE=true` (also set in `render.yaml`) is what makes the login cookie work correctly there. Point a real domain at it later from the service's **Settings → Custom Domains** if you want a nicer URL.
+
+To change what's deployed later, push to the branch Render is watching — it redeploys automatically.
