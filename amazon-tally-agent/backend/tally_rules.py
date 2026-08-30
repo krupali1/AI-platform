@@ -201,11 +201,14 @@ def evaluate_rules(row_fields, rules, ledger_config):
         group_rules = by_group.get(group, [])
         matched_rules = [r for r in group_rules if _condition_matches(row_fields, r, ledger_config)]
         if not matched_rules:
+            short_label = RULE_GROUPS.get(group, group).split(" - ")[0]
             escalations.append({
                 "trigger_reason": "no_matching_rule",
                 "rule_id": None,
                 "rule_name": None,
-                "message": f'No active "{RULE_GROUPS.get(group, group)}" rule matched this row.',
+                "group": group,
+                "message": (f'This row needs a "{short_label}" rule to tell the agent what to do with it, '
+                            f'but none of the rules currently set up in Agent Management cover this case.'),
             })
             return
         for r in matched_rules:

@@ -6,7 +6,7 @@ global config that persists across every monthly TallyRun, which is
 the whole point of setting them up once.
 """
 import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, LargeBinary
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, LargeBinary, Float
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -311,6 +311,30 @@ class TallyNotification(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class TallySkuMaster(Base):
+    """Global, per-platform SKU -> internal product code mapping, set
+    directly on the Skills page and edited as a table - not a raw
+    uploaded file, the same "set once, no more re-uploading per run"
+    idea as TallySampleFormat below. Only sku/internal_code/
+    qty_multiplier are structured here because those are the only
+    master-file fields _build_master_map() in tally_pipeline.py
+    actually consumes (SKU resolution + combo/bundle unbundling) -
+    HSN code, pack size, and any other master-file column still come
+    from a per-run uploaded file mapped in Field Mapping, same as
+    before; this table fills the one gap that used to force a
+    re-upload every month, it doesn't replace the rest of the master
+    file. Multiple rows can share the same sku (one per combo
+    component), matching how a combo/bundle SKU already fans out."""
+    __tablename__ = "tally_sku_masters"
+    id = Column(Integer, primary_key=True)
+    platform_slug = Column(String)
+    sku = Column(String)
+    internal_code = Column(String)
+    qty_multiplier = Column(Float, nullable=True)
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class TallySampleFormat(Base):
     """The "Sample Tally Format" Skill - the ordered list of output
     column names the final Excel/zip export writes, set once by an
@@ -327,24 +351,6 @@ class TallySampleFormat(Base):
     __tablename__ = "tally_sample_formats"
     id = Column(Integer, primary_key=True)
     columns_json = Column(Text)
-    updated_by = Column(String, nullable=True)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-
-class TallyAgentNotes(Base):
-    """The "Agent Notes" Skill - freeform markdown an Admin writes
-    directly in chat (no file upload), like a SKILL.md: background,
-    conventions, edge cases, anything that doesn't fit the structured
-    Rules/Field Mapping/Master tables. Not applied by the deterministic
-    pipeline itself - instead it's prepended as context to every AI-
-    assist call (suggest_rule, suggest_rules_from_document, and their
-    suggest-from-text siblings in main.py), the same "AI only ever
-    proposes, a human still reviews and saves" contract as those. A
-    single global row, versioned the same way as every other Skill -
-    see TallySkillVersion, skill_key="agent_notes"."""
-    __tablename__ = "tally_agent_notes"
-    id = Column(Integer, primary_key=True)
-    body_md = Column(Text)
     updated_by = Column(String, nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow)
 

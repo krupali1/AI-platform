@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>PIL Sales Agent</title>
+<title>Online Sales Accountant</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -299,13 +299,13 @@
 <div class="shell">
   <div class="sidebar">
     <div class="sb-top">
-      <button class="brand" onclick="go('chat', null)"><span class="brand-mark">P</span><span class="brand-text">PIL Sales Agent<small>Online sales &rarr; Tally register</small></span></button>
+      <button class="brand" onclick="go('chat', null)"><span class="brand-mark">O</span><span class="brand-text">Online Sales Accountant<small>Online sales &rarr; Tally register</small></span></button>
       <button class="newchat" onclick="newChat()"><span>&#43;</span> New chat</button>
     </div>
     <div class="sb-nav">
       <button class="sb-nav-item" data-page="approvals" id="navApprovals" style="display:none;" onclick="go('approvals')"><span class="sb-icon">&#9989;</span> Approvals</button>
-      <button class="sb-nav-item" data-page="repository" onclick="go('repository')"><span class="sb-icon">&#128193;</span> Repository</button>
-      <button class="sb-nav-item" data-page="skills" onclick="go('skills','library')"><span class="sb-icon">&#127919;</span> Skills</button>
+      <button class="sb-nav-item" data-page="repository" onclick="go('repository')"><span class="sb-icon">&#128193;</span> Data Repository</button>
+      <button class="sb-nav-item" data-page="skills" onclick="go('skills','library')"><span class="sb-icon">&#127919;</span> Agent Management</button>
     </div>
     <div class="sb-hist">
       <div class="sb-hist-label">Recent chats</div>
@@ -508,9 +508,9 @@ function renderTopbar(){
   } else if(STATE.activePage==='approvals'){
     top.innerHTML = `<div><h2>Approvals</h2><div class="sub">Sheets other people have sent for your review</div></div><div class="spacer"></div>${bell}`;
   } else if(STATE.activePage==='skills'){
-    top.innerHTML = `<div><h2>Skills</h2><div class="sub">What the agent reads before checking any file</div></div><div class="spacer"></div>${bell}`;
+    top.innerHTML = `<div><h2>Agent Management</h2><div class="sub">What the agent reads before checking any file</div></div><div class="spacer"></div>${bell}`;
   } else {
-    top.innerHTML = `<div><h2>Repository</h2><div class="sub">Every month's final Tally sheet, by platform</div></div><div class="spacer"></div>${bell}`;
+    top.innerHTML = `<div><h2>Data Repository</h2><div class="sub">Every month's final Tally sheet, by platform</div></div><div class="spacer"></div>${bell}`;
   }
 }
 function toggleNotifPop(){
@@ -599,11 +599,13 @@ function renderAttachList(){
   return STATE.files.map(f=>`<span class="attach-pill">&#128196; ${escapeHtml(f.original_filename)}</span>`).join('');
 }
 const UPLOAD_MENU = [
+  {role:'sales', orderType:'B2B', label:'B2B MTR Sales', tag:'sales'},
+  {role:'sales', orderType:'B2C', label:'B2C MTR Sales', tag:'sales'},
+  {role:'sales', orderType:'B2B', label:'B2B MTR Return', tag:'sales'},
+  {role:'sales', orderType:'B2C', label:'B2C MTR Return', tag:'sales'},
+  {role:'batch_summary', label:'Batch wise Summary', tag:''},
   {role:'master', label:'Master File', tag:'optional'},
   {role:'sample_tally', label:'Sample Tally Sheet', tag:'sample'},
-  {role:'batch_summary', label:'Batch wise Summary', tag:'optional'},
-  {role:'sales', orderType:'B2B', label:'B2B Sales Report', tag:'sales'},
-  {role:'sales', orderType:'B2C', label:'B2C Sales Report', tag:'sales'},
   {role:'sales', orderType:'', label:'Other sales report…', tag:'prompt-order-type'},
   {role:'rules_sheet', label:'Rules & Exceptions sheet', tag:'optional'},
   {role:'column_mapping', label:'Column Mapping sheet', tag:'optional'},
@@ -775,10 +777,10 @@ function renderThreadContent(){
     html += msgBot(`<b>${escapeHtml(g.approved_by||'The Approver')}</b> approved the sheet on ${fmtWhen(g.approved_at)} — it's cleared to download or email.`);
   } else if(g.review_status==='returned'){
     const openReview = STATE.reviewIssues.filter(i=>i.status==='pending').length;
-    html += msgBot(`${escapeHtml(g.approved_by||'The Approver')} sent the sheet back with ${STATE.reviewIssues.length} comment${STATE.reviewIssues.length===1?'':'s'}.`);
+    html += msgBot(`${escapeHtml(g.approved_by||'The Approver')} sent the sheet back with ${STATE.reviewIssues.length} comment${STATE.reviewIssues.length===1?'':'s'}. This sheet gets one round of review — once these are resolved, it's yours to download or email, no second approval needed.`);
     html += msgBot(exceptionsCard('review', STATE.reviewIssues, openReview, 'Approver comments'));
     if(openReview===0 && STATE.reviewIssues.length>0){
-      html += `<div style="text-align:center;"><button class="quick-btn" onclick="resubmit()">&#128228; Send back to the Approver</button></div>`;
+      html += `<div style="text-align:center;"><button class="quick-btn" onclick="resolveReviewComments()">&#10003; Comments resolved — clear for download &amp; email</button></div>`;
     }
   }
   return html;
@@ -1030,10 +1032,10 @@ async function refreshAfterIssueChange(scope){
   }
   renderThread(); renderSidebar();
 }
-async function resubmit(){
+async function resolveReviewComments(){
   try{
-    await apiJson(`/api/tally-generations/${STATE.generation.id}/submit-for-approval`, {method:'POST'});
-    toast('Sent back for approval.');
+    await apiJson(`/api/tally-generations/${STATE.generation.id}/resolve-review`, {method:'POST'});
+    toast('Cleared for download and email.');
     await loadGeneration(STATE.generation.id);
     renderThread();
   }catch(e){ toast(e.message, true); }
@@ -1069,11 +1071,13 @@ function finalCard(){
       <span class="chip ${statusChip.c}">${statusChip.t}</span></div>
     <div class="final-table-wrap" id="finalTableWrap">${renderOutputTable(rows)}</div>
     <div class="final-actions">
-      <button class="btn btn-primary" ${(!finalDone||g.review_status==='submitted')?'disabled':''} onclick="submitForApproval()">&#128228; ${g.review_status==='returned'?'Resend for approval':'Send for approval'}</button>
+      ${g.review_status!=='returned' ? `<button class="btn btn-primary" ${(!finalDone||g.review_status==='submitted')?'disabled':''} onclick="submitForApproval()">&#128228; Send for approval</button>` : ''}
       <a class="btn btn-outline" ${!canDownload?'disabled':''} href="${canDownload?`/api/tally-generations/${g.id}/download/excel`:'#'}">&#11015; Download for Tally</a>
       <a class="btn btn-outline" ${!canDownload?'disabled':''} href="${canDownload?`/api/tally-generations/${g.id}/download/tally-xml`:'#'}">&#11015; Tally XML</a>
       <button class="btn btn-outline" ${!canEmail?'disabled':''} onclick="openEmailModal()">&#9993; Email to accounts</button>
-      ${!finalDone ? `<span style="font-size:12px;color:var(--ink-faint);">Close the flagged rows first.</span>` : g.review_status!=='approved' ? `<span style="font-size:12px;color:var(--ink-faint);">Downloads here are a preview copy for your own review — emailing to accounts still needs the Approver's sign-off.</span>` : ''}
+      ${!finalDone ? `<span style="font-size:12px;color:var(--ink-faint);">Close the flagged rows first.</span>`
+        : g.review_status==='returned' ? `<span style="font-size:12px;color:var(--ink-faint);">Resolve the Approver's comments above to unlock download and email — this sheet only gets one round of review, so it won't go back to the Approver again.</span>`
+        : g.review_status!=='approved' ? `<span style="font-size:12px;color:var(--ink-faint);">Downloads here are a preview copy for your own review — emailing to accounts still needs the Approver's sign-off.</span>` : ''}
     </div>
   </div>`;
 }
@@ -1392,13 +1396,12 @@ async function sendBackSheet(){
 
 /* ================= Skills page ================= */
 function pageSkills(){
-  return `<div class="page-head"><h1>Skills</h1><p>SKU mapping, the sample Tally format, and the rules the agent follows on every run — uploaded once, reused for every month. Only Admins can change them.</p></div>
+  return `<div class="page-head"><h1>Agent Management</h1><p>SKU mapping, the sample Tally format, and the rules the agent follows on every run — uploaded once, reused for every month. Only Admins can change them.</p></div>
     <div class="tabs">
       <button class="tabbtn ${STATE.skillsTab==='library'?'on':''}" onclick="go('skills','library')">&#127919; Library</button>
       <button class="tabbtn ${STATE.skillsTab==='master'?'on':''}" onclick="go('skills','master')">&#128203; SKU / Product master</button>
       <button class="tabbtn ${STATE.skillsTab==='format'?'on':''}" onclick="go('skills','format')">&#128196; Sample Tally Format</button>
       <button class="tabbtn ${STATE.skillsTab==='rules'?'on':''}" onclick="go('skills','rules')">&#10024; Rules &amp; mapping</button>
-      <button class="tabbtn ${STATE.skillsTab==='notes'?'on':''}" onclick="go('skills','notes')">&#128221; Agent Notes</button>
       <button class="tabbtn ${STATE.skillsTab==='roles'?'on':''}" onclick="go('skills','roles')">&#128101; User roles</button>
     </div>
     <div id="skillsTabBody">${skillsTabLoading()}</div>`;
@@ -1407,18 +1410,16 @@ function skillsTabLoading(){ return `<div style="padding:40px;text-align:center;
 async function wireSkillsPage(){
   const body = document.getElementById('skillsTabBody');
   if(STATE.skillsTab==='library') body.innerHTML = skillsLibrary();
-  else if(STATE.skillsTab==='master'){ body.innerHTML = await skillsMaster(); }
+  else if(STATE.skillsTab==='master'){ body.innerHTML = await skillsMaster(); renderSkuMasterTable(); }
   else if(STATE.skillsTab==='format'){ body.innerHTML = await skillsFormat(); }
   else if(STATE.skillsTab==='rules'){ await loadRulesAndMappings(); body.innerHTML = skillsRules(); }
-  else if(STATE.skillsTab==='notes'){ body.innerHTML = await skillsAgentNotes(); }
   else { await loadUsers(); body.innerHTML = skillsRoles(); }
 }
 function skillsLibrary(){
   const items = [
-    {icon:'&#128203;', name:'SKU / Product Master', desc:'Every marketplace product code, its Tally product name, pack size and HSN code — uploaded per platform in a chat.', tab:'master'},
+    {icon:'&#128203;', name:'SKU / Product Master', desc:'Every marketplace SKU mapped to its internal Tally product code — upload a file or edit rows directly, per platform.', tab:'master'},
     {icon:'&#128196;', name:'Sample Tally Format', desc:'The exact columns and order the final sheet must be produced in — set once here, not re-uploaded per run.', tab:'format'},
     {icon:'&#127919;', name:'Rules & Column Mapping', desc:'How each Tally column is worked out — filters, warehouse logic, batch allocation, tax.', tab:'rules'},
-    {icon:'&#128221;', name:'Agent Notes', desc:'Freeform notes an Admin writes in chat — background the AI keeps in mind whenever it proposes rules or mappings.', tab:'notes'},
   ];
   return `${!isAdmin()?`<div class="chip chip-warn" style="margin-bottom:14px;">&#128274; Admin only to edit</div>`:''}
     ${items.map(sk=>`
@@ -1431,25 +1432,105 @@ function skillsLibrary(){
 async function skillsMaster(){
   STATE.skillsPlatform = STATE.skillsPlatform || (STATE.platforms[0]||{}).slug;
   const plat = STATE.skillsPlatform;
-  let runs = [];
-  try{ runs = await apiJson(`/api/tally-runs?platform_slug=${encodeURIComponent(plat)}`); }catch(e){}
-  let masterFiles = [];
-  for(const r of runs.slice(0,5)){
-    try{ const files = await apiJson(`/api/tally-runs/${r.id}/files`); masterFiles = masterFiles.concat(files.filter(f=>f.file_role==='master').map(f=>({...f, run:r}))); }catch(e){}
-  }
-  masterFiles.sort((a,b)=> new Date(b.uploaded_at) - new Date(a.uploaded_at));
-  const latest = masterFiles[0];
+  await loadSkuMaster(plat);
+  const rows = STATE.skuMaster || [];
   return `<div style="display:flex;gap:20px;flex-wrap:wrap;">
     <div style="width:170px;flex-shrink:0;"><p style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-faint);font-weight:600;margin:0 0 8px;">Platform</p>
       <div class="platform-list">${STATE.platforms.map(p=>`<button class="${p.slug===plat?'on':''}" onclick="STATE.skillsPlatform='${p.slug}'; wireSkillsPage();">${escapeHtml(p.display_name)}</button>`).join('')}</div></div>
-    <div style="flex:1;min-width:280px;"><div class="card">
-      <div class="card-head"><div style="flex:1;"><div class="card-title">${escapeHtml(platformName(plat))} &middot; Master file on record</div><div class="card-sub">${latest ? `${escapeHtml(latest.original_filename)} &middot; ${escapeHtml(latest.run.period_label||'')}` : 'None uploaded yet'}</div></div></div>
-      ${!latest ? `<div style="padding:40px 16px;text-align:center;"><p style="color:var(--ink-muted);font-size:13px;">No Master file recorded for ${escapeHtml(platformName(plat))} yet.</p><p style="color:var(--ink-faint);font-size:12px;margin-top:4px;">Attach one from the + menu in a chat for this platform.</p></div>`
-      : `<div style="padding:16px;font-size:13px;color:var(--ink-muted);">Uploaded ${fmtWhen(latest.uploaded_at)} &middot; ${fmtSize(latest.size_bytes)}${latest.sheet_names.length?` &middot; sheets: ${latest.sheet_names.join(', ')}`:''}</div>`}
+    <div style="flex:1;min-width:320px;"><div class="card">
+      <div class="card-head"><div style="flex:1;"><div class="card-title">${escapeHtml(platformName(plat))} &middot; SKU / Product Master</div><div class="card-sub">${rows.length} SKU(s) on record</div></div>
+        ${isAdmin()?`<button class="btn btn-sm" onclick="pickSkuMasterFile()">&#8593; Upload new SKU file</button><button class="btn btn-sm" onclick="openSkuMasterRowForm()">&#43; Add SKU</button>`:'<span class="chip chip-warn">&#128274; Admin only</span>'}
+        <button class="btn btn-sm" onclick="showSkuMasterVersions()">History</button></div>
+      ${rows.length ? `<div style="padding:10px 15px 0;"><input id="skuMasterFilter" placeholder="Filter by SKU or code…" oninput="renderSkuMasterTable()" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:inherit;font-size:13px;"></div>
+        <div class="table-wrap" id="skuMasterTableWrap" style="padding:10px 15px 15px;"></div>`
+      : `<div style="padding:40px 16px;text-align:center;"><p style="color:var(--ink-muted);font-size:13px;">No SKUs recorded yet for ${escapeHtml(platformName(plat))}.</p><p style="color:var(--ink-faint);font-size:12px;margin-top:4px;">${isAdmin()?'Upload a file above, or add SKUs one at a time.':'Ask an Admin to upload the Master file here.'}</p></div>`}
     </div>
-    <p style="font-size:12px;color:var(--ink-faint);margin-top:10px;">The agent reads this every run — a code missing here is what raises the "not recognised" exception in chat. To update it, attach a fresh Master File in that platform's next chat.</p>
+    <p style="font-size:12px;color:var(--ink-faint);margin-top:10px;">The agent reads this every run — a SKU missing here is what raises "not found in the Master file" in chat. Set once here instead of re-uploading per run; attaching a Master File in a specific chat still adds HSN/pack-size/etc. for that run on top of this.</p>
     </div>
   </div>`;
+}
+async function loadSkuMaster(plat){
+  try{ STATE.skuMaster = await apiJson(`/api/tally-sku-master?platform_slug=${encodeURIComponent(plat)}`); }catch(e){ STATE.skuMaster = []; }
+}
+function renderSkuMasterTable(){
+  const wrap = document.getElementById('skuMasterTableWrap');
+  if(!wrap) return;
+  const filterEl = document.getElementById('skuMasterFilter');
+  const q = (filterEl ? filterEl.value : '').trim().toLowerCase();
+  let rows = STATE.skuMaster || [];
+  if(q) rows = rows.filter(r=>(r.sku||'').toLowerCase().includes(q) || (r.internal_code||'').toLowerCase().includes(q));
+  const SKU_MASTER_CAP = 300;
+  const shown = rows.slice(0, SKU_MASTER_CAP);
+  wrap.innerHTML = `<table><thead><tr><th>SKU</th><th>Internal Code</th><th>Multiplier</th><th></th></tr></thead><tbody>
+    ${shown.map(r=>`<tr><td class="mono">${escapeHtml(r.sku)}</td><td class="mono">${escapeHtml(r.internal_code)}</td><td class="mono">${r.qty_multiplier==null?'—':r.qty_multiplier}</td>
+      <td style="text-align:right;">${isAdmin()?`<button class="btn btn-sm" onclick="openSkuMasterRowForm(${r.id})">Edit</button>`:''}</td></tr>`).join('')}
+  </tbody></table>${rows.length>SKU_MASTER_CAP?`<p style="font-size:12px;color:var(--ink-faint);margin-top:8px;">${rows.length-SKU_MASTER_CAP} more row(s) not shown — narrow the filter to see them.</p>`:''}`;
+}
+function pickSkuMasterFile(){
+  const input = document.createElement('input');
+  input.type = 'file'; input.style.display = 'none';
+  input.addEventListener('change', async ()=>{
+    if(input.files[0]) await uploadSkuMasterFile(input.files[0]);
+    input.remove();
+  });
+  document.body.appendChild(input); input.click();
+}
+async function uploadSkuMasterFile(file){
+  if(!confirm(`Replace the whole SKU Master for ${platformName(STATE.skillsPlatform)} with this file? The current list is kept in History and can be restored.`)) return;
+  const fd = new FormData(); fd.append('file', file); fd.append('platform_slug', STATE.skillsPlatform);
+  try{
+    const res = await apiFetch('/api/tally-sku-master/from-file', {method:'POST', body: fd});
+    const body = await res.json().catch(()=>([]));
+    if(!res.ok) throw new Error(body.detail || 'Upload failed');
+    toast('SKU Master updated.');
+    document.getElementById('skillsTabBody').innerHTML = await skillsMaster();
+    renderSkuMasterTable();
+  }catch(e){ toast(e.message, true); }
+}
+function openSkuMasterRowForm(rowId){
+  const row = rowId ? (STATE.skuMaster||[]).find(r=>r.id===rowId) : {sku:'', internal_code:'', qty_multiplier:''};
+  document.getElementById('modalRoot').innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <div class="modal-head"><h3>${rowId?'Edit SKU':'New SKU'}</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div class="field-grid">
+        <div class="field full"><label>SKU</label><input id="sm-sku" value="${escapeHtml(row.sku)}"></div>
+        <div class="field full"><label>Internal Code (Tally product)</label><input id="sm-code" value="${escapeHtml(row.internal_code)}"></div>
+        <div class="field full"><label>Quantity multiplier <span style="font-weight:400;color:var(--ink-faint);">(combos only — leave blank otherwise)</span></label><input id="sm-mult" type="number" step="any" value="${row.qty_multiplier==null?'':row.qty_multiplier}"></div>
+      </div>
+    </div>
+    <div class="modal-body" style="padding-top:0;"><div class="actions-end">${rowId?`<button class="btn btn-danger" onclick="deleteSkuMasterRow(${rowId})">Delete</button>`:''}<button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveSkuMasterRow(${rowId||'null'})">Save</button></div></div>
+  </div></div>`;
+}
+async function saveSkuMasterRow(rowId){
+  const payload = {
+    platform_slug: STATE.skillsPlatform,
+    sku: document.getElementById('sm-sku').value,
+    internal_code: document.getElementById('sm-code').value,
+    qty_multiplier: document.getElementById('sm-mult').value===''?null:parseFloat(document.getElementById('sm-mult').value),
+  };
+  try{
+    if(rowId) await apiJson(`/api/tally-sku-master/${rowId}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    else await apiJson('/api/tally-sku-master', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    closeModal(); toast('SKU saved.');
+    document.getElementById('skillsTabBody').innerHTML = await skillsMaster();
+    renderSkuMasterTable();
+  }catch(e){ toast(e.message, true); }
+}
+async function deleteSkuMasterRow(rowId){
+  try{
+    await apiJson(`/api/tally-sku-master/${rowId}`, {method:'DELETE'});
+    closeModal(); toast('SKU deleted.');
+    document.getElementById('skillsTabBody').innerHTML = await skillsMaster();
+    renderSkuMasterTable();
+  }catch(e){ toast(e.message, true); }
+}
+async function showSkuMasterVersions(){
+  let versions = [];
+  try{ versions = await apiJson(`/api/tally-sku-master/versions?platform_slug=${encodeURIComponent(STATE.skillsPlatform)}`); }catch(e){}
+  document.getElementById('modalRoot').innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this)closeModal()"><div class="modal">
+    <div class="modal-head"><h3>${escapeHtml(platformName(STATE.skillsPlatform))} SKU Master version history</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
+    <div class="modal-body">${versions.length ? versions.map((v,i)=>`<div class="vhist-row"><span class="vhist-badge">v${v.version_number}</span><span style="flex:1;">${escapeHtml(v.change_summary||'')} &middot; ${escapeHtml(v.created_by||'')}</span><span style="color:var(--ink-muted);font-size:12px;">${fmtWhen(v.created_at)}</span>${i===0?'<span class="chip chip-ok">Current</span>':''}</div>`).join('') : '<p style="color:var(--ink-faint);font-size:13px;">No history yet.</p>'}</div>
+  </div></div>`;
 }
 async function skillsFormat(){
   await loadSampleFormat();
@@ -1516,59 +1597,6 @@ async function showSampleFormatVersions(){
     <div class="modal-body">${versions.length ? versions.map((v,i)=>`<div class="vhist-row"><span class="vhist-badge">v${v.version_number}</span><span style="flex:1;">${escapeHtml(v.change_summary||'')} &middot; ${escapeHtml(v.created_by||'')}</span><span style="color:var(--ink-muted);font-size:12px;">${fmtWhen(v.created_at)}</span>${i===0?'<span class="chip chip-ok">Current</span>':''}</div>`).join('') : '<p style="color:var(--ink-faint);font-size:13px;">No history yet.</p>'}</div>
   </div></div>`;
 }
-async function loadAgentNotes(){
-  try{ STATE.agentNotes = await apiJson('/api/tally-agent-notes'); }catch(e){ STATE.agentNotes = {body_md:'', updated_by:null, updated_at:null}; }
-}
-async function skillsAgentNotes(){
-  await loadAgentNotes();
-  const body = (STATE.agentNotes && STATE.agentNotes.body_md) || '';
-  const meta = body ? `${body.split(/\s+/).filter(Boolean).length} word(s) &middot; last set ${fmtWhen(STATE.agentNotes.updated_at)}${STATE.agentNotes.updated_by ? ' by '+escapeHtml(STATE.agentNotes.updated_by) : ''}` : 'Not set yet';
-  return `<div class="card">
-    <div class="card-head"><div style="flex:1;"><div class="card-title">Agent Notes</div><div class="card-sub">${meta}</div></div>
-      ${isAdmin()?`<button class="btn btn-sm btn-primary" onclick="toggleAgentNotesEdit()">${body?'Edit':'&#43; Write notes'}</button>`:'<span class="chip chip-warn">&#128274; Admin only</span>'}
-      <button class="btn btn-sm" onclick="showAgentNotesVersions()">History</button></div>
-    <div id="agentNotesEdit"></div>
-    ${body ? `<div style="padding:16px;font-size:13.5px;line-height:1.7;white-space:pre-wrap;color:var(--ink);">${escapeHtml(body)}</div>`
-      : `<div style="padding:40px 16px;text-align:center;"><p style="color:var(--ink-muted);font-size:13px;">Nothing written yet — anything the agent should keep in mind (background, conventions, edge cases) that doesn't fit a rule or a mapping row.</p></div>`}
-  </div>
-  <p style="font-size:12px;color:var(--ink-faint);margin-top:10px;">Not applied directly — read as background context every time the agent proposes a rule or a field mapping (in "Teach the agent" below, or from an uploaded document). It never saves anything by itself; you still review and approve each suggestion.</p>`;
-}
-function toggleAgentNotesEdit(){
-  const el = document.getElementById('agentNotesEdit');
-  if(!el) return;
-  if(el.innerHTML){ el.innerHTML = ''; return; }
-  const body = (STATE.agentNotes && STATE.agentNotes.body_md) || '';
-  el.innerHTML = `<div style="padding:0 16px 16px;">
-    <p class="hint" style="font-size:12px;color:var(--ink-faint);margin:10px 0;">Plain text or markdown — write it like you'd explain it to a new teammate.</p>
-    <textarea id="agentNotesText" rows="12" placeholder="e.g. Refund SKUs ending in _DUP are intentional duplicates from a combo split, not a data error…" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;font-size:13px;resize:vertical;">${escapeHtml(body)}</textarea>
-    <div class="actions-end" style="margin-top:8px;"><button class="btn btn-sm" onclick="toggleAgentNotesEdit()">Cancel</button><button class="btn btn-sm btn-primary" onclick="saveAgentNotesText()">&#10003; Save</button></div>
-  </div>`;
-}
-async function saveAgentNotesText(){
-  const body_md = document.getElementById('agentNotesText').value;
-  try{
-    await apiJson('/api/tally-agent-notes', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({body_md})});
-    toast('Agent Notes saved.');
-    document.getElementById('skillsTabBody').innerHTML = await skillsAgentNotes();
-  }catch(e){ toast(e.message, true); }
-}
-async function showAgentNotesVersions(){
-  let versions = [];
-  try{ versions = await apiJson('/api/tally-agent-notes/versions'); }catch(e){}
-  document.getElementById('modalRoot').innerHTML = `<div class="modal-backdrop" onclick="if(event.target===this)closeModal()"><div class="modal">
-    <div class="modal-head"><h3>Agent Notes version history</h3><button class="modal-close" onclick="closeModal()">&times;</button></div>
-    <div class="modal-body">${versions.length ? versions.map((v,i)=>`<div class="vhist-row"><span class="vhist-badge">v${v.version_number}</span><span style="flex:1;">${escapeHtml(v.change_summary||'')} &middot; ${escapeHtml(v.created_by||'')}</span><span style="color:var(--ink-muted);font-size:12px;">${fmtWhen(v.created_at)}</span>${i===0?'<span class="chip chip-ok">Current</span>':`<button class="btn btn-sm" onclick="restoreAgentNotesVersion(${v.id})">Restore</button>`}</div>`).join('') : '<p style="color:var(--ink-faint);font-size:13px;">No history yet.</p>'}</div>
-  </div></div>`;
-}
-async function restoreAgentNotesVersion(versionId){
-  if(!confirm('Restore this version of Agent Notes? The current text will be kept in history and can be restored back.')) return;
-  try{
-    await apiJson(`/api/tally-agent-notes/versions/${versionId}/restore`, {method:'POST'});
-    toast('Agent Notes restored.');
-    closeModal();
-    document.getElementById('skillsTabBody').innerHTML = await skillsAgentNotes();
-  }catch(e){ toast(e.message, true); }
-}
 async function loadRulesAndMappings(){
   try{ STATE.rules = await apiJson('/api/tally-rules'); }catch(e){ STATE.rules = []; }
   try{ STATE.mappings = await apiJson('/api/tally-field-mappings'); }catch(e){ STATE.mappings = []; }
@@ -1593,7 +1621,7 @@ async function saveLedgerConfig(){
   }catch(e){ toast(e.message, true); }
 }
 function skillsRules(){
-  return `${skillsLedgerCard()}<div style="display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:16px;">
+  return `<div style="display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:16px;">
     <div class="card"><div class="card-head"><div class="card-icon green">&#10024;</div><div style="flex:1;"><div class="card-title">Rules</div><div class="card-sub">${STATE.rules.length} rule(s) the agent follows on every run</div></div>
       ${isAdmin()?`<button class="btn btn-sm btn-primary" onclick="openRuleForm()">&#43; Add rule</button>`:'<span class="chip chip-warn">&#128274; Admin only</span>'}
       <button class="btn btn-sm" onclick="showRuleVersions()">History</button></div>
@@ -1850,7 +1878,7 @@ async function inviteUser(){
 
 /* ================= Repository page ================= */
 function pageRepository(){
-  return `<div class="page-head"><h1>Repository</h1><p>Every month's final Tally sheet, saved automatically once it's built — grouped by platform.</p></div>
+  return `<div class="page-head"><h1>Data Repository</h1><p>Every month's final Tally sheet, ready to download — grouped by platform.</p></div>
     <div class="tabs" id="repoTabs"></div>
     <div id="repoBody">${skillsTabLoading()}</div>`;
 }
@@ -1859,18 +1887,22 @@ async function loadRepository(){
   document.getElementById('repoTabs').innerHTML = STATE.platforms.map(p=>`<button class="tabbtn ${p.slug===STATE.repoPlatform?'on':''}" onclick="STATE.repoPlatform='${p.slug}'; loadRepository();">${escapeHtml(p.display_name)}</button>`).join('');
   const runs = STATE.runs.filter(r=>r.platform_slug===STATE.repoPlatform);
   const body = document.getElementById('repoBody');
-  if(!runs.length){ body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center;color:var(--ink-faint);">No runs yet for this platform.</div>'; return; }
   const rowsHtml = [];
   for(const r of runs){
     let gens = [];
     try{ gens = await apiJson(`/api/tally-runs/${r.id}/generations`); }catch(e){}
-    if(!gens.length){ rowsHtml.push(`<tr><td style="font-weight:600;">${escapeHtml(r.period_label||'—')}</td><td>—</td><td>—</td><td>${statusLabel(r.status)}</td><td>${fmtWhen(r.created_at)}</td><td></td></tr>`); continue; }
+    // Only finished builds are "a final file" worth listing here - a
+    // run that's still mid-conversation (no generation yet, or one
+    // still processing) belongs in Recent Chats, not here.
     gens.forEach(g=>{
-      const approvalChip = g.review_status==='approved' ? '<span class="chip chip-ok">Approved</span>' : g.review_status==='submitted' ? '<span class="chip chip-neutral">With approver</span>' : g.review_status==='returned' ? '<span class="chip chip-warn">Sent back</span>' : '<span class="chip chip-neutral">Draft</span>';
+      if(g.status!=='ready') return;
+      const ready = g.review_pending_count===0;
+      const approvalChip = g.review_status==='approved' ? '<span class="chip chip-ok">Approved</span>' : g.review_status==='submitted' ? '<span class="chip chip-neutral">With approver</span>' : g.review_status==='returned' ? '<span class="chip chip-warn">Sent back</span>' : ready ? '<span class="chip chip-ok">Ready</span>' : '<span class="chip chip-neutral">Draft</span>';
       rowsHtml.push(`<tr><td style="font-weight:600;">${escapeHtml(r.period_label||'—')}</td><td>${escapeHtml([g.order_type,g.location].filter(Boolean).join(' · ')||'All')}</td><td class="mono">${g.total_rows}</td><td>${approvalChip}</td><td>${fmtWhen(g.processed_at||g.created_at)}</td>
-        <td style="display:flex;gap:6px;justify-content:flex-end;"><button class="btn btn-sm" onclick="go('chat',${r.id})">Open</button>${g.review_status==='approved'?`<a class="btn btn-sm" href="/api/tally-generations/${g.id}/download/excel">Download</a>`:''}</td></tr>`);
+        <td style="display:flex;gap:6px;justify-content:flex-end;">${ready?`<a class="btn btn-sm" href="/api/tally-generations/${g.id}/download/excel">&#11015; Excel</a><a class="btn btn-sm" href="/api/tally-generations/${g.id}/download/tally-xml">&#11015; XML</a>`:'<span style="font-size:12px;color:var(--ink-faint);">Flagged rows still open</span>'}</td></tr>`);
     });
   }
+  if(!rowsHtml.length){ body.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center;color:var(--ink-faint);">No finished Tally sheets yet for this platform.</div>'; return; }
   body.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Period</th><th>Slice</th><th>Rows</th><th>Status</th><th>Updated</th><th></th></tr></thead><tbody>${rowsHtml.join('')}</tbody></table></div>`;
 }
 </script>

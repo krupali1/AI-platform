@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from database import init_db, SessionLocal
 from models import (TallyRun, TallyGeneration, TallyUploadedFile, TallyFieldMapping, TallyLedgerConfig, TallyRule,
                      TallyPlatform, TallyOutputRow, TallyReviewItem, Event, TallyUser, TallyNotification, TallySkillVersion,
-                     TallySampleFormat, TallyAgentNotes)
+                     TallySampleFormat, TallySkuMaster)
 import auth
 import tally_parsing
 import tally_rules
@@ -888,11 +888,8 @@ def suggest_rule(payload: SuggestPayload, user: str = Depends(auth.require_login
     """AI-assist only - proposes a rule shape, never saves one. The
     human must review the result and POST /api/tally-rules themselves."""
     field_keys = [f["key"] for f in tally_pipeline.CANONICAL_FIELDS]
-    session = SessionLocal()
-    context = _with_agent_notes(session, payload.context)
-    session.close()
     try:
-        suggestion = tally_rules.suggest_rule(context, canonical_fields=field_keys)
+        suggestion = tally_rules.suggest_rule(payload.context, canonical_fields=field_keys)
     except Exception as e:
         raise HTTPException(500, f"AI suggestion failed: {e}")
     suggestion["warnings"] = _rule_suggestion_warnings(suggestion)
@@ -920,9 +917,6 @@ async def suggest_rules_from_document(file: UploadFile = File(...), user: str = 
         raise HTTPException(400, f"No readable text found in '{file.filename}'.")
 
     field_keys = [f["key"] for f in tally_pipeline.CANONICAL_FIELDS]
-    session = SessionLocal()
-    text = _with_agent_notes(session, text)
-    session.close()
     try:
         suggestions = tally_rules.suggest_rules_from_document(text, canonical_fields=field_keys)
     except Exception as e:
@@ -946,9 +940,6 @@ def suggest_rules_from_text(payload: SuggestFromTextPayload, user: str = Depends
     if not text:
         raise HTTPException(400, "No text provided.")
     field_keys = [f["key"] for f in tally_pipeline.CANONICAL_FIELDS]
-    session = SessionLocal()
-    text = _with_agent_notes(session, text)
-    session.close()
     try:
         suggestions = tally_rules.suggest_rules_from_document(text, canonical_fields=field_keys)
     except Exception as e:
@@ -977,9 +968,6 @@ async def suggest_field_mappings_from_document(file: UploadFile = File(...), pla
         raise HTTPException(400, f"Could not read '{file.filename}': {e}")
     if not text.strip():
         raise HTTPException(400, f"No readable text found in '{file.filename}'.")
-    session = SessionLocal()
-    text = _with_agent_notes(session, text)
-    session.close()
     try:
         result = tally_rules.suggest_field_mappings_from_document(text, tally_pipeline.CANONICAL_FIELDS, platform_slug or None)
     except Exception as e:
@@ -1012,9 +1000,6 @@ def suggest_field_mappings_from_text(payload: SuggestMappingsFromTextPayload, us
     text = payload.text.strip()
     if not text:
         raise HTTPException(400, "No text provided.")
-    session = SessionLocal()
-    text = _with_agent_notes(session, text)
-    session.close()
     try:
         result = tally_rules.suggest_field_mappings_from_document(text, tally_pipeline.CANONICAL_FIELDS, payload.platform_slug or None)
     except Exception as e:
@@ -1227,96 +1212,154 @@ def list_sample_format_versions(user: str = Depends(auth.require_login)):
     return out
 
 
-# ---------- Agent Notes (freeform markdown Skill, typed in chat -
-# background/conventions/edge cases that don't fit the structured
-# Rules/Field Mapping/Master tables; fed as context into the AI-assist
-# calls in tally_rules.py, never applied by the pipeline directly) ----------
+# ---------- SKU / Product Master (global, per-platform, editable as a
+# table - not the per-run uploaded Master file, see TallySkuMaster) ----------
 
-def _agent_notes_out(row):
-    if not row:
-        return {"body_md": "", "updated_by": None, "updated_at": None}
-    return {"body_md": row.body_md or "", "updated_by": row.updated_by,
+def _sku_master_out(row):
+    return {"id": row.id, "platform_slug": row.platform_slug, "sku": row.sku, "internal_code": row.internal_code,
+            "qty_multiplier": row.qty_multiplier, "updated_by": row.updated_by,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None}
 
 
-def current_agent_notes(session):
-    """What tally_rules.py's AI-assist calls prepend as context - the
-    empty string when no notes have been written yet."""
-    row = session.query(TallyAgentNotes).order_by(TallyAgentNotes.id.desc()).first()
-    return (row.body_md or "").strip() if row else ""
+def _sku_master_snapshot(session, platform_slug):
+    rows = session.query(TallySkuMaster).filter_by(platform_slug=platform_slug).all()
+    return {"rows": [{"sku": r.sku, "internal_code": r.internal_code, "qty_multiplier": r.qty_multiplier} for r in rows]}
 
 
-def _with_agent_notes(session, text):
-    """Prepends the Agent Notes Skill (if any) to a prompt input, so
-    every AI-assist call in this file picks it up automatically - the
-    Admin writes it once, not per rule/mapping suggestion."""
-    notes = current_agent_notes(session)
-    if not notes:
-        return text
-    return (f"Standing background notes an Admin wrote for you to keep in mind (the \"Agent Notes\" Skill):\n"
-            f"\"\"\"{notes}\"\"\"\n\n{text}")
-
-
-@app.get("/api/tally-agent-notes")
-def get_agent_notes(user: str = Depends(auth.require_login)):
+@app.get("/api/tally-sku-master")
+def list_sku_master(platform_slug: str, user: str = Depends(auth.require_login)):
     session = SessionLocal()
-    row = session.query(TallyAgentNotes).order_by(TallyAgentNotes.id.desc()).first()
-    out = _agent_notes_out(row)
+    rows = session.query(TallySkuMaster).filter_by(platform_slug=platform_slug).order_by(TallySkuMaster.sku).all()
+    out = [_sku_master_out(r) for r in rows]
     session.close()
     return out
 
 
-class AgentNotesPayload(BaseModel):
-    body_md: str
+class SkuMasterRowPayload(BaseModel):
+    platform_slug: str
+    sku: str
+    internal_code: str
+    qty_multiplier: float | None = None
 
 
-@app.put("/api/tally-agent-notes")
-def put_agent_notes(payload: AgentNotesPayload, user: str = Depends(auth.require_role("admin"))):
+@app.post("/api/tally-sku-master")
+def create_sku_master_row(payload: SkuMasterRowPayload, user: str = Depends(auth.require_role("admin"))):
+    sku = payload.sku.strip()
+    internal_code = payload.internal_code.strip()
+    if not sku or not internal_code:
+        raise HTTPException(400, "SKU and Internal Code are both required")
     session = SessionLocal()
-    body = payload.body_md.strip()
-    row = session.query(TallyAgentNotes).order_by(TallyAgentNotes.id.desc()).first()
+    row = TallySkuMaster(platform_slug=payload.platform_slug, sku=sku, internal_code=internal_code,
+                          qty_multiplier=payload.qty_multiplier, updated_by=user, updated_at=datetime.datetime.utcnow())
+    session.add(row)
+    session.commit()
+    _snapshot_skill(session, f"sku_master:{payload.platform_slug}", _sku_master_snapshot(session, payload.platform_slug), user, f"Added SKU {sku}")
+    out = _sku_master_out(row)
+    session.close()
+    return out
+
+
+@app.put("/api/tally-sku-master/{row_id}")
+def update_sku_master_row(row_id: int, payload: SkuMasterRowPayload, user: str = Depends(auth.require_role("admin"))):
+    sku = payload.sku.strip()
+    internal_code = payload.internal_code.strip()
+    if not sku or not internal_code:
+        raise HTTPException(400, "SKU and Internal Code are both required")
+    session = SessionLocal()
+    row = session.query(TallySkuMaster).filter_by(id=row_id).first()
     if not row:
-        row = TallyAgentNotes(body_md="")
-        session.add(row)
-    row.body_md = body
+        session.close()
+        raise HTTPException(404, "Row not found")
+    row.sku = sku
+    row.internal_code = internal_code
+    row.qty_multiplier = payload.qty_multiplier
     row.updated_by = user
     row.updated_at = datetime.datetime.utcnow()
     session.commit()
-    words = len(body.split())
-    _snapshot_skill(session, "agent_notes", {"body_md": body}, user, f"Updated notes ({words} word{'s' if words != 1 else ''})")
-    out = _agent_notes_out(row)
+    _snapshot_skill(session, f"sku_master:{row.platform_slug}", _sku_master_snapshot(session, row.platform_slug), user, f"Edited SKU {sku}")
+    out = _sku_master_out(row)
     session.close()
     return out
 
 
-@app.get("/api/tally-agent-notes/versions")
-def list_agent_notes_versions(user: str = Depends(auth.require_login)):
+@app.delete("/api/tally-sku-master/{row_id}")
+def delete_sku_master_row(row_id: int, user: str = Depends(auth.require_role("admin"))):
     session = SessionLocal()
-    rows = session.query(TallySkillVersion).filter_by(skill_key="agent_notes").order_by(TallySkillVersion.version_number.desc()).all()
+    row = session.query(TallySkuMaster).filter_by(id=row_id).first()
+    if not row:
+        session.close()
+        raise HTTPException(404, "Row not found")
+    platform_slug, sku = row.platform_slug, row.sku
+    session.delete(row)
+    session.commit()
+    _snapshot_skill(session, f"sku_master:{platform_slug}", _sku_master_snapshot(session, platform_slug), user, f"Deleted SKU {sku}")
+    session.close()
+    return {"ok": True}
+
+
+_SKU_COL_CANDIDATES = ["sku", "platform sku", "seller sku", "asin"]
+_CODE_COL_CANDIDATES = ["internal code", "internal product code", "tally code", "product code", "code"]
+_MULT_COL_CANDIDATES = ["qty multiplier", "quantity multiplier", "multiplier", "combo multiplier"]
+
+
+def _detect_col(columns, candidates):
+    norm = {c.strip().lower(): c for c in columns}
+    for cand in candidates:
+        if cand in norm:
+            return norm[cand]
+    return None
+
+
+@app.post("/api/tally-sku-master/from-file")
+async def set_sku_master_from_file(file: UploadFile = File(...), platform_slug: str = Form(...), user: str = Depends(auth.require_role("admin"))):
+    """Replaces this platform's whole SKU Master with what's in the
+    uploaded file - same "set the whole thing at once" contract as
+    Sample Tally Format's own from-file endpoint. Columns are
+    auto-detected by common header names (SKU / Internal Code /
+    [Qty] Multiplier); nothing needs a Field Mapping configured first,
+    and every row stays directly editable afterward if a column name
+    wasn't recognized or a value needs fixing."""
+    blob = await _read_upload_capped(file)
+    try:
+        parsed = tally_parsing.parse_excel_file(blob, file.content_type, file.filename)
+    except Exception as e:
+        raise HTTPException(400, f"Could not read '{file.filename}' as a spreadsheet: {e}")
+    names = tally_parsing.sheet_names_of(parsed)
+    if not names:
+        raise HTTPException(400, "No sheets found in this file")
+    sheet = names[0]
+    columns = tally_parsing.column_names_of(parsed, sheet)
+    sku_col = _detect_col(columns, _SKU_COL_CANDIDATES)
+    code_col = _detect_col(columns, _CODE_COL_CANDIDATES)
+    mult_col = _detect_col(columns, _MULT_COL_CANDIDATES)
+    if not sku_col or not code_col:
+        raise HTTPException(400, f"Couldn't find a SKU and an Internal Code column in '{file.filename}'. Columns found: {', '.join(columns)}")
+    sku_map = tally_parsing.build_master_sku_map(parsed, sheet, sku_col, code_col, mult_col)
+
+    session = SessionLocal()
+    session.query(TallySkuMaster).filter_by(platform_slug=platform_slug).delete()
+    now = datetime.datetime.utcnow()
+    count = 0
+    for sku, components in sku_map.items():
+        for comp in components:
+            session.add(TallySkuMaster(platform_slug=platform_slug, sku=sku, internal_code=comp["code"],
+                                        qty_multiplier=comp["multiplier"], updated_by=user, updated_at=now))
+            count += 1
+    session.commit()
+    _snapshot_skill(session, f"sku_master:{platform_slug}", _sku_master_snapshot(session, platform_slug), user,
+                     f"Replaced with {count} row(s) from '{file.filename}'")
+    rows = session.query(TallySkuMaster).filter_by(platform_slug=platform_slug).order_by(TallySkuMaster.sku).all()
+    out = [_sku_master_out(r) for r in rows]
+    session.close()
+    return out
+
+
+@app.get("/api/tally-sku-master/versions")
+def list_sku_master_versions(platform_slug: str, user: str = Depends(auth.require_login)):
+    session = SessionLocal()
+    rows = session.query(TallySkillVersion).filter_by(skill_key=f"sku_master:{platform_slug}").order_by(TallySkillVersion.version_number.desc()).all()
     out = [{"id": v.id, "version_number": v.version_number, "change_summary": v.change_summary,
             "created_by": v.created_by, "created_at": v.created_at.isoformat() if v.created_at else None} for v in rows]
-    session.close()
-    return out
-
-
-@app.post("/api/tally-agent-notes/versions/{version_id}/restore")
-def restore_agent_notes_version(version_id: int, user: str = Depends(auth.require_role("admin"))):
-    session = SessionLocal()
-    v = session.query(TallySkillVersion).filter_by(id=version_id, skill_key="agent_notes").first()
-    if not v:
-        session.close()
-        raise HTTPException(404, "Version not found")
-    snapshot = json.loads(v.snapshot)
-    row = session.query(TallyAgentNotes).order_by(TallyAgentNotes.id.desc()).first()
-    if not row:
-        row = TallyAgentNotes(body_md="")
-        session.add(row)
-    row.body_md = snapshot.get("body_md", "")
-    row.updated_by = user
-    row.updated_at = datetime.datetime.utcnow()
-    session.commit()
-    _snapshot_skill(session, "agent_notes", snapshot, user, f"Restored to v{v.version_number}")
-    out = _agent_notes_out(row)
     session.close()
     return out
 
@@ -1576,13 +1619,29 @@ def send_back_generation(generation_id: int, payload: SendBackPayload, user: str
             continue
         row_id = c.get("row_id")
         field = (c.get("field") or "").strip()
+        field_label = tally_pipeline._field_label(field) if field else ""
+        # Look up the actual row so the Creator sees exactly which
+        # order/row this is about, not just an opaque row_id - a
+        # comment that only names a column ("on gst_percent") is
+        # useless once there are hundreds of rows for that column.
+        row = session.query(TallyOutputRow).filter_by(id=row_id).first() if row_id else None
+        row_desc = f"Order {row.order_id}" if row and row.order_id else (f"Row #{row_id}" if row_id else "")
+        location_bits = [b for b in (row_desc, field_label) if b]
+        title = f"Approver comment{' on ' + field_label if field_label else ''}{' · ' + row_desc if row_desc else ''}"
+        facts = []
+        if row_desc:
+            facts.append({"label": "Row", "value": row_desc})
+        if row and row.sku:
+            facts.append({"label": "SKU", "value": row.sku})
+        if field_label:
+            facts.append({"label": "Column", "value": field_label})
         session.add(TallyReviewItem(
             run_id=generation.run_id, generation_id=generation.id, stage="review", severity="warning",
             affected_row_ids=str(row_id) if row_id else None,
-            source_label="Approver comment", location_label=field or None,
-            title=f"Approver comment{' on ' + field if field else ''}", body=message,
-            detail=json.dumps({"available_modes": ["fix"], "default_mode": "fix",
-                                "fix": {"note": message, "fields": ([{"key": field, "label": field, "value": "", "type": "text"}] if field else [])}}),
+            source_label="Approver comment", location_label=" · ".join(location_bits) or None,
+            title=title, body=message,
+            detail=json.dumps({"facts": facts, "available_modes": ["fix"], "default_mode": "fix",
+                                "fix": {"note": message, "fields": ([{"key": field, "label": field_label, "value": "", "type": "text"}] if field else [])}}),
             trigger_reason="approver_comment", status="pending",
         ))
         added += 1
@@ -1598,6 +1657,37 @@ def send_back_generation(generation_id: int, payload: SendBackPayload, user: str
     if creator:
         _notify(session, creator, "returned", generation.id, "Your Tally sheet was sent back",
                 f"{user} left {added} comment{'s' if added != 1 else ''} on {_generation_label(generation)}.")
+    out = _generation_out(generation)
+    session.close()
+    return out
+
+
+@app.post("/api/tally-generations/{generation_id}/resolve-review")
+def resolve_review(generation_id: int, user: str = Depends(auth.require_login)):
+    """One level of review only: once the Creator has fixed every
+    comment the Approver left on a "returned" sheet, they clear it
+    themselves - it does not go back to the Approver for a second
+    round. Reuses "approved" as the terminal state (same download/
+    email gate as a real approval) but records who actually cleared
+    it and how, in approved_by, rather than crediting the Approver a
+    second time for a fix they never re-reviewed."""
+    session = SessionLocal()
+    generation = session.query(TallyGeneration).filter_by(id=generation_id).first()
+    if not generation:
+        session.close()
+        raise HTTPException(404, "Generation not found")
+    if generation.review_status != "returned":
+        session.close()
+        raise HTTPException(409, "This sheet isn't waiting on Approver comments")
+    open_comments = session.query(TallyReviewItem).filter_by(
+        generation_id=generation_id, stage="review", status="pending").count()
+    if open_comments:
+        session.close()
+        raise HTTPException(409, "Resolve every Approver comment first")
+    generation.review_status = "approved"
+    generation.approved_by = f"{user} (resolved after Approver review)"
+    generation.approved_at = datetime.datetime.utcnow()
+    session.commit()
     out = _generation_out(generation)
     session.close()
     return out

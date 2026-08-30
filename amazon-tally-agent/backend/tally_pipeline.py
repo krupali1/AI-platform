@@ -24,7 +24,7 @@ import re
 import datetime
 from collections import defaultdict
 
-from models import TallyUploadedFile, TallyFieldMapping, TallyLedgerConfig, TallyRule, TallyPlatform, TallyGeneration, TallyOutputRow, TallyReviewItem, Event
+from models import TallyUploadedFile, TallyFieldMapping, TallyLedgerConfig, TallyRule, TallyPlatform, TallyGeneration, TallyOutputRow, TallyReviewItem, Event, TallySkuMaster
 import tally_parsing
 import tally_rules
 
@@ -303,7 +303,11 @@ def _extract_sku_multiplier(sku, pattern):
     return value if value > 0 else None
 
 
-def _build_master_map(files, mappings_index, ledger_config=None):
+def _global_sku_rows(session, platform_slug):
+    return session.query(TallySkuMaster).filter_by(platform_slug=platform_slug).all()
+
+
+def _build_master_map(files, mappings_index, ledger_config=None, global_sku_rows=None):
     """Returns {sku: [{code, multiplier}, ...]} - see
     tally_parsing.build_master_sku_map for why this is a list rather
     than a single code. A component's multiplier is resolved in
@@ -313,23 +317,33 @@ def _build_master_map(files, mappings_index, ledger_config=None):
     order (SKU "GT_PK2", Amazon-reported quantity 1) whose own
     historical Tally entry shows quantity 2, i.e. this fallback is
     reproducing an unbundling PIL's team already does today, not
-    inventing a new one."""
+    inventing a new one.
+
+    global_sku_rows (TallySkuMaster rows for this run's platform, set
+    from Skills - SKU/Product Master, not tied to any one run) seed
+    the map first; a per-run uploaded Master file is then layered on
+    top and wins for any SKU it also covers, since re-uploading a
+    corrected file for a specific run is a more specific, deliberate
+    action than the standing global mapping."""
     combo_pattern = (ledger_config or {}).get("combo_sku_pattern") or DEFAULT_COMBO_SKU_PATTERN
+    combined = {}
+    for row in (global_sku_rows or []):
+        if not row.sku or not row.internal_code:
+            continue
+        combined.setdefault(row.sku, []).append({"code": row.internal_code, "multiplier": row.qty_multiplier})
     master_files = [f for f in files if f.file_role == "master"]
     master_mappings = mappings_index.get(("master", None, None), [])
     sku_col = next((m.source_column_name for m in master_mappings if m.target_field == "master_sku_column"), None)
     code_col = next((m.source_column_name for m in master_mappings if m.target_field == "master_code_column"), None)
     multiplier_col = next((m.source_column_name for m in master_mappings if m.target_field == "master_qty_multiplier_column"), None)
-    combined = {}
-    if not sku_col or not code_col:
-        return combined
-    for f in master_files:
-        parsed = _parse_file(f)
-        names = tally_parsing.sheet_names_of(parsed)
-        if not names:
-            continue
-        sheet = next((m.source_sheet_name for m in master_mappings if m.source_sheet_name), None) or names[0]
-        combined.update(tally_parsing.build_master_sku_map(parsed, sheet, sku_col, code_col, multiplier_col))
+    if sku_col and code_col:
+        for f in master_files:
+            parsed = _parse_file(f)
+            names = tally_parsing.sheet_names_of(parsed)
+            if not names:
+                continue
+            sheet = next((m.source_sheet_name for m in master_mappings if m.source_sheet_name), None) or names[0]
+            combined.update(tally_parsing.build_master_sku_map(parsed, sheet, sku_col, code_col, multiplier_col))
     for sku, components in combined.items():
         for component in components:
             if component["multiplier"] is None:
@@ -897,7 +911,7 @@ def validate_inputs(session, run):
         mappings_index = _mappings_index(session)
         platforms_by_slug = _platforms_by_slug(session)
         ledger_config = _ledger_config_dict(session)
-        sku_map = _build_master_map(files, mappings_index, ledger_config)
+        sku_map = _build_master_map(files, mappings_index, ledger_config, _global_sku_rows(session, run.platform_slug))
         sku_map.update(_manual_sku_overrides(session, run))
         rows = resolve_field_mapping(files, parsed_by_file, mappings_index, platforms_by_slug)
 
@@ -974,7 +988,7 @@ def generate_output(session, run, generation):
         platforms_by_slug = _platforms_by_slug(session)
         rules = _rule_dicts(session)
         ledger_config = _ledger_config_dict(session)
-        sku_map = _build_master_map(files, mappings_index, ledger_config)
+        sku_map = _build_master_map(files, mappings_index, ledger_config, _global_sku_rows(session, run.platform_slug))
         sku_map.update(_manual_sku_overrides(session, run))
         batch_queues, batch_location_aware = _build_batch_queues(files, mappings_index)
         rows = resolve_field_mapping(files, parsed_by_file, mappings_index, platforms_by_slug)
@@ -1053,16 +1067,35 @@ def generate_output(session, run, generation):
         _log_generation(session, generation, "info", "Computed taxable value, GST, and totals for every row")
 
         for row, escalations, missing, fields in row_objs:
+            # Shared context every final-stage item shows, on top of
+            # whatever's specific to it - so a user unfamiliar with the
+            # pipeline can see the whole shape of the row (not just an
+            # Order ID) without opening the raw sheet.
+            base_facts = [
+                {"label": "Order ID", "value": row.order_id or ""},
+                {"label": "SKU", "value": row.sku or ""},
+                {"label": "Product", "value": fields.get("internal_product_code", "") or ""},
+                {"label": "Platform", "value": (fields.get("platform") or "").title()},
+                {"label": "Order Type", "value": fields.get("order_type", "") or ""},
+                {"label": "Transaction Type", "value": fields.get("transaction_type", "") or ""},
+            ]
             for esc in escalations:
+                if esc["trigger_reason"] == "no_matching_rule":
+                    consequence = "This row is on hold and won't be part of the downloaded sheet until it's resolved."
+                    action = f'Fix it directly below, or add a rule for this case in Agent Management → Rules & mapping so it (and every future row like it) resolves on its own.'
+                    body = f"{esc['message']} {consequence} {action}"
+                else:
+                    body = (f'Flagged by the rule "{esc.get("rule_name") or "an escalation rule"}" set up in '
+                            f'Agent Management. {esc["message"]}')
                 session.add(TallyReviewItem(
                     run_id=run.id, generation_id=generation.id, stage="final",
                     severity="warning" if esc["trigger_reason"] == "rule_escalation" else "error",
                     affected_row_ids=str(row.id),
                     source_label="Tally sheet", location_label=f"Order {row.order_id or ''}",
                     title=esc["message"],
-                    body=esc["message"],
+                    body=body,
                     detail=json.dumps({
-                        "facts": [{"label": "Order ID", "value": row.order_id or ""}, {"label": "SKU", "value": row.sku or ""}],
+                        "facts": base_facts,
                         "available_modes": ["fix"],
                         "default_mode": "fix",
                         "fix": {"note": "Enter a note or override value to resolve this row.",
@@ -1072,14 +1105,17 @@ def generate_output(session, run, generation):
                     trigger_reason=esc["trigger_reason"],
                 ))
             if missing:
+                field_names = ', '.join(_field_label(k) for k in missing)
                 session.add(TallyReviewItem(
                     run_id=run.id, generation_id=generation.id, stage="final", severity="error",
                     affected_row_ids=str(row.id),
                     source_label="Tally sheet", location_label=f"Order {row.order_id or ''}",
-                    title=f"Missing required field(s): {', '.join(_field_label(k) for k in missing)}",
-                    body=f"Order {row.order_id or ''} is missing {', '.join(_field_label(k) for k in missing)} - needed before this row can post.",
+                    title=f"Missing required field(s): {field_names}",
+                    body=(f"Order {row.order_id or ''} is missing {field_names}. None of the uploaded files, "
+                          f"rules, or the Master file produced a value for it, so this row can't post to Tally "
+                          f"until it's filled in below."),
                     detail=json.dumps({
-                        "facts": [{"label": "Order ID", "value": row.order_id or ""}],
+                        "facts": base_facts,
                         "available_modes": ["fix"],
                         "default_mode": "fix",
                         "fix": {"note": "Enter the missing value(s) for this row.",
@@ -1091,10 +1127,16 @@ def generate_output(session, run, generation):
             if batch_status and not _batch_data_exempt(fields):
                 if batch_status == "no_batch_data":
                     title = f"No Batch Summary data for \"{fields.get('internal_product_code', '')}\" at \"{fields.get('godown', '')}\""
-                    body = "This product/location combination doesn't appear anywhere in the uploaded Batch Summary. Batch no./MFG/EXP left blank - enter manually if needed."
+                    body = ("This product/location combination doesn't appear anywhere in the uploaded Batch Summary, "
+                            "so the agent has nothing to allocate a batch from. Batch no./MFG/EXP were left blank on "
+                            "this row - either enter them manually below, or check the Batch Summary actually covers "
+                            "this product at this Godown and re-upload it.")
                 else:
                     title = f"Batch Summary doesn't cover the full quantity for \"{fields.get('internal_product_code', '')}\" at \"{fields.get('godown', '')}\""
-                    body = f"Batches on file for this product/location ran out before covering all {fields.get('quantity', '')} unit(s) on this row. Batch no./MFG/EXP left blank for the shortfall - enter manually or update the Batch Summary."
+                    body = (f"The batches on file for this product/location only cover part of the "
+                            f"{fields.get('quantity', '')} unit(s) sold on this row - the rest ran out. Batch no./MFG/EXP "
+                            f"were left blank for the shortfall; enter them manually below, or update the Batch Summary "
+                            f"with the missing batch(es) and rebuild.")
                 session.add(TallyReviewItem(
                     run_id=run.id, generation_id=generation.id, stage="final", severity="warning",
                     affected_row_ids=str(row.id),
@@ -1106,6 +1148,8 @@ def generate_output(session, run, generation):
                             {"label": "Product", "value": fields.get("internal_product_code", "")},
                             {"label": "Godown", "value": fields.get("godown", "")},
                             {"label": "Quantity on this row", "value": str(fields.get("quantity", ""))},
+                            {"label": "Platform", "value": (fields.get("platform") or "").title()},
+                            {"label": "Order Type", "value": fields.get("order_type", "") or ""},
                         ],
                         "available_modes": ["fix"],
                         "default_mode": "fix",
