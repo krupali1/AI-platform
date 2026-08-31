@@ -23,18 +23,34 @@ def _sale_or_return(transaction_type):
     return "Return" if (transaction_type or "").strip().lower() == "refund" else "Sale"
 
 
+# A Return file carries two extra columns a Sale file doesn't - the
+# Credit Note issued against the refund. Prepended ahead of the
+# regular Sample Tally Format columns, matching PIL's own real Return
+# output layout exactly (confirmed against a real "Amazon Return B2B"
+# file). Sale files never had a Credit Note, so they don't get these.
+RETURN_EXTRA_COLUMNS = ["CN No", "CN Date"]
+
+
+def _columns_for(sale_or_return, sample_columns):
+    if sale_or_return == "Return":
+        return RETURN_EXTRA_COLUMNS + list(sample_columns)
+    return list(sample_columns)
+
+
 def _group_rows(sample_columns, column_to_field, rows):
     """Buckets rows into {(order_type, Sale/Return, godown): [records]},
-    each record already shaped to sample_columns + Status - one group
-    becomes one file in build_excel_files. The Tally XML export stays
-    a single file (Tally's own bulk-voucher-import format has no
-    per-file grouping concept), so it doesn't use this."""
+    each record already shaped to that group's columns (Return groups
+    get RETURN_EXTRA_COLUMNS prepended, Sale groups don't) + Status -
+    one group becomes one file in build_excel_files. The Tally XML
+    export stays a single file (Tally's own bulk-voucher-import format
+    has no per-file grouping concept), so it doesn't use this."""
     groups = {}
     for row in rows:
         data = row.get("data") or {}
-        key = (data.get("order_type") or "", _sale_or_return(data.get("transaction_type")), data.get("godown") or "")
+        sale_or_return = _sale_or_return(data.get("transaction_type"))
+        key = (data.get("order_type") or "", sale_or_return, data.get("godown") or "")
         record = {}
-        for col in sample_columns:
+        for col in _columns_for(sale_or_return, sample_columns):
             field = column_to_field.get(col)
             record[col] = data.get(field, "") if field else ""
         record["Status"] = row.get("status", "")
@@ -71,7 +87,6 @@ def build_excel_files(sample_columns, column_to_field, rows, platform_name="", p
     are named to sort in a predictable order: order type, then Sale
     before Return, then location alphabetically."""
     groups = _group_rows(sample_columns, column_to_field, rows)
-    columns = list(sample_columns) + ["Status"]
     used_names = set()
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -86,6 +101,7 @@ def build_excel_files(sample_columns, column_to_field, rows, platform_name="", p
                 file_name = f"{stem} ({n}).{ext}"
             used_names.add(file_name)
 
+            columns = _columns_for(sale_or_return, sample_columns) + ["Status"]
             df = pd.DataFrame(groups[key], columns=columns)
             xlsx_buf = io.BytesIO()
             with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as writer:

@@ -62,6 +62,8 @@ CANONICAL_FIELDS = [
     {"key": "invoice_number", "label": "Invoice Number", "group": "source"},
     {"key": "hsn_code", "label": "HSN Code", "group": "source"},
     {"key": "godown", "label": "Godown (Warehouse ID, verbatim - never rule-overridden)", "group": "source"},
+    {"key": "cn_no", "label": "Credit Note No. (Refund/Return rows only)", "group": "source"},
+    {"key": "cn_date", "label": "Credit Note Date (Refund/Return rows only)", "group": "source"},
     {"key": "master_sku_column", "label": "Master Sheet: SKU / Item Code column", "group": "master"},
     {"key": "master_code_column", "label": "Master Sheet: Internal Product Code column", "group": "master"},
     {"key": "master_qty_multiplier_column", "label": "Master Sheet: Quantity Multiplier column (optional, for combo packs)", "group": "master"},
