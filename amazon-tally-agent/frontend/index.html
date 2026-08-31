@@ -349,7 +349,18 @@ function toast(msg, isError){
 }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtSize(n){ if(n>1024*1024) return (n/1024/1024).toFixed(1)+' MB'; if(n>1024) return (n/1024).toFixed(0)+' KB'; return (n||0)+' B'; }
-function fmtWhen(iso){ if(!iso) return ''; const d = new Date(iso); const now = new Date(); const sameDay = d.toDateString()===now.toDateString(); return sameDay ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : d.toLocaleDateString([], {day:'numeric', month:'short'}); }
+function toUtcDate(iso){
+  if(!iso) return null;
+  // The backend sends naive UTC timestamps with no trailing Z/offset
+  // (Python's datetime.utcnow().isoformat()) - without this, the
+  // browser treats the string as already being in the viewer's local
+  // timezone instead of converting from UTC, so every displayed time
+  // is off by the viewer's UTC offset (e.g. an afternoon IST run
+  // showing as morning).
+  const hasTz = /[zZ]|[+-]\d\d:\d\d$/.test(iso);
+  return new Date(hasTz ? iso : iso + 'Z');
+}
+function fmtWhen(iso){ if(!iso) return ''; const d = toUtcDate(iso); const now = new Date(); const sameDay = d.toDateString()===now.toDateString(); return sameDay ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : d.toLocaleDateString([], {day:'numeric', month:'short'}); }
 
 const ROLE_COLOR = { creator:'#0E7C5A', approver:'#3B5B8C', admin:'#D9622A' };
 const ROLE_LABEL = { creator:'Creator', approver:'Approver', admin:'Admin' };
@@ -386,7 +397,7 @@ function hasSampleFormatSkill(){ return (STATE.sampleFormat && STATE.sampleForma
 async function loadPlatforms(){ STATE.platforms = await apiJson('/api/tally-platforms'); }
 async function loadRuns(){
   STATE.runs = await apiJson('/api/tally-runs');
-  STATE.runs.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
+  STATE.runs.sort((a,b)=> toUtcDate(b.created_at) - toUtcDate(a.created_at));
 }
 async function loadNotifications(){
   try{ STATE.notifications = await apiJson('/api/notifications'); }catch(e){ STATE.notifications = []; }
