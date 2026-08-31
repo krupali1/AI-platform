@@ -579,8 +579,13 @@ async function onChatDrop(e){
   if(!STATE.run){ toast('Start a chat before attaching files.', true); return; }
   const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
   if(!files.length) return;
-  toast(`Adding ${files.length} file(s) as "Additional files" — re-tag any that need a specific role from the + menu.`, false);
-  for(const f of files){ await uploadFile(f, 'other', {label: f.name}); }
+  const detectedList = [], otherList = [];
+  for(const f of files){
+    const tag = resolveFileTag(f, 'other', {label: f.name});
+    if(tag.detected) detectedList.push(`${f.name} (${tag.detected.label})`); else otherList.push(f.name);
+    await uploadFile(f, tag.role, tag.extra);
+  }
+  summarizeAutoTags(detectedList, otherList);
 }
 function renderComposer(){
   const disabled = !STATE.run;
@@ -637,12 +642,48 @@ function onAttachPick(i){
     pickAndUpload(u.role, u.orderType!==undefined ? {order_type: u.orderType} : {});
   }
 }
+// Which role a file actually gets is decided by its filename, not by
+// which + menu button was clicked - a human picking the wrong button
+// (e.g. tagging a file named "...B2C..." as B2B) is exactly the
+// failure mode this exists to prevent. The clicked button (or 'other'
+// for drag-and-drop/folder upload) is only a fallback for filenames
+// with no clear signal in them.
+function detectFileRole(filename){
+  const name = (filename||'').toLowerCase();
+  if(name.includes('b2b')) return {role:'sales', order_type:'B2B', label:'a B2B Sales Report'};
+  if(name.includes('b2c')) return {role:'sales', order_type:'B2C', label:'a B2C Sales Report'};
+  if(/batch.*summary|stock.*summary/.test(name)) return {role:'batch_summary', label:'the Batch wise Summary'};
+  if(name.includes('sku') && name.includes('list') || name.includes('master')) return {role:'master', label:'the Master File'};
+  if(/sample.*tally|tally.*format/.test(name)) return {role:'sample_tally', label:'the Sample Tally Sheet'};
+  return null;
+}
+function resolveFileTag(file, fallbackRole, fallbackExtra){
+  fallbackExtra = fallbackExtra || {};
+  const detected = detectFileRole(file.name);
+  if(!detected) return {role: fallbackRole, extra: fallbackExtra, detected: null};
+  const extra = Object.assign({}, fallbackExtra);
+  if(detected.order_type !== undefined) extra.order_type = detected.order_type;
+  const overridden = detected.role !== fallbackRole || (detected.order_type||'') !== (fallbackExtra.order_type||'');
+  return {role: detected.role, extra, detected: overridden ? detected : null};
+}
+function summarizeAutoTags(detectedList, otherList){
+  const parts = [];
+  if(detectedList.length) parts.push(`Tagged by filename: ${detectedList.join(', ')}`);
+  if(otherList.length) parts.push(`Added as Additional files (re-tag from the + menu if needed): ${otherList.join(', ')}`);
+  if(parts.length) toast(parts.join(' — '), false);
+}
 function pickAndUpload(role, extra){
   const input = document.createElement('input');
   input.type = 'file'; input.multiple = true; input.style.display = 'none';
   input.addEventListener('change', async ()=>{
     const files = Array.from(input.files);
-    for(const f of files){ await uploadFile(f, role, extra||{}); }
+    const retagged = [];
+    for(const f of files){
+      const tag = resolveFileTag(f, role, extra||{});
+      if(tag.detected) retagged.push(`${f.name} → ${tag.detected.label}`);
+      await uploadFile(f, tag.role, tag.extra);
+    }
+    if(retagged.length) toast(`Tagged by filename instead of the button clicked: ${retagged.join(', ')}`, false);
     input.remove();
   });
   document.body.appendChild(input); input.click();
@@ -654,8 +695,13 @@ function pickFolder(){
   input.addEventListener('change', async ()=>{
     const files = Array.from(input.files);
     if(!files.length){ input.remove(); return; }
-    toast(`Adding ${files.length} file(s) as "Additional files" — re-tag any that need a specific role from the + menu.`, false);
-    for(const f of files){ await uploadFile(f, 'other', {label: f.webkitRelativePath || f.name}); }
+    const detectedList = [], otherList = [];
+    for(const f of files){
+      const tag = resolveFileTag(f, 'other', {label: f.webkitRelativePath || f.name});
+      if(tag.detected) detectedList.push(`${f.name} (${tag.detected.label})`); else otherList.push(f.name);
+      await uploadFile(f, tag.role, tag.extra);
+    }
+    summarizeAutoTags(detectedList, otherList);
     input.remove();
   });
   document.body.appendChild(input); input.click();
