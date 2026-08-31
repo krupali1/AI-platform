@@ -1297,9 +1297,9 @@ def delete_sku_master_row(row_id: int, user: str = Depends(auth.require_role("ad
     return {"ok": True}
 
 
-_SKU_COL_CANDIDATES = ["sku", "platform sku", "seller sku", "asin"]
-_CODE_COL_CANDIDATES = ["internal code", "internal product code", "tally code", "product code", "code"]
-_MULT_COL_CANDIDATES = ["qty multiplier", "quantity multiplier", "multiplier", "combo multiplier"]
+_SKU_COL_CANDIDATES = ["sku", "platform sku", "seller sku", "seller-sku", "asin"]
+_CODE_COL_CANDIDATES = ["internal code", "internal product code", "tally code", "product code", "code", "product name"]
+_MULT_COL_CANDIDATES = ["qty multiplier", "quantity multiplier", "multiplier", "combo multiplier", "pack of"]
 
 
 def _detect_col(columns, candidates):
