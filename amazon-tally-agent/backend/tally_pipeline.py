@@ -894,7 +894,11 @@ def _manual_sku_overrides(session, run):
         sku = detail.get("sku")
         code = values.get("internal_product_code")
         if sku and code:
-            overrides[sku] = [{"code": code, "multiplier": 1.0}]
+            try:
+                multiplier = float(values.get("qty_multiplier") or 1)
+            except (TypeError, ValueError):
+                multiplier = 1.0
+            overrides[sku] = [{"code": code, "multiplier": multiplier}]
     return overrides
 
 
@@ -937,8 +941,11 @@ def validate_inputs(session, run):
                     "facts": [{"label": "Rows affected", "value": str(count)}],
                     "available_modes": ["fix", "reupload"],
                     "default_mode": "fix",
-                    "fix": {"note": "Enter the internal product code for this SKU.",
-                            "fields": [{"key": "internal_product_code", "label": "Internal product code", "value": ""}]},
+                    "fix": {"note": "Enter the internal product code for this SKU. If the SKU itself is a combo/pack (e.g. a PK2 or PK3 suffix), also set the quantity it represents - it multiplies this SKU's reported quantity the same way a Master File combo row would.",
+                            "fields": [
+                                {"key": "internal_product_code", "label": "Internal product code", "value": ""},
+                                {"key": "qty_multiplier", "label": "Quantity (e.g. 2 for PK2, 3 for PK3)", "value": "1"},
+                            ]},
                     "reupload": {"target_file_role": "master", "note": "Add the missing SKU to the item master and upload it again."},
                 }),
                 trigger_reason="unmapped_sku",
